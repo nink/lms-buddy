@@ -13,6 +13,7 @@ import {
   unloadAll,
   loadModelNow,
   listRemoteModels,
+  setGpuPowerLimit,
 } from "./actions.js";
 
 function pickConn(body) {
@@ -142,6 +143,22 @@ export function createApp() {
       }
       const result = await loadModelNow(loadConfig());
       res.json(result);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.post("/api/gpu-power", async (req, res) => {
+    try {
+      const result = await setGpuPowerLimit(
+        {
+          index: req.body?.index,
+          watts: req.body?.watts,
+          enablePersistence: req.body?.enablePersistence !== false,
+        },
+        loadConfig(),
+      );
+      res.status(result.ok ? 200 : 400).json(result);
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
     }

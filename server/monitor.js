@@ -10,15 +10,32 @@ function parseNvidiaSmi(csv) {
     .map((l) => l.trim())
     .filter(Boolean);
   for (const line of lines) {
-    // index, name, temp.C, util.gpu, memory.used MiB, memory.total MiB, fan.speed
+    // index, name, temp, util, mem used/total, fan, power draw, limit, default, min, max
     const parts = line.split(",").map((p) => p.trim());
     if (parts.length < 6) continue;
-    const [index, name, temp, util, memUsed, memTotal, fan, power] = parts;
+    const [
+      index,
+      name,
+      temp,
+      util,
+      memUsed,
+      memTotal,
+      fan,
+      power,
+      powerLimit,
+      powerDefault,
+      powerMin,
+      powerMax,
+    ] = parts;
     const tempN = Number(temp);
     const utilN = Number(util);
     const used = Number(memUsed);
     const total = Number(memTotal);
     const powerN = Number(power);
+    const lim = Number(powerLimit);
+    const def = Number(powerDefault);
+    const minL = Number(powerMin);
+    const maxL = Number(powerMax);
     gpus.push({
       index: Number(index),
       name: shortGpuName(name),
@@ -29,6 +46,10 @@ function parseNvidiaSmi(csv) {
       vramTotalMiB: Number.isFinite(total) ? total : null,
       fanPct: fan && fan !== "[N/A]" && fan !== "N/A" ? Number(fan) : null,
       powerW: Number.isFinite(powerN) ? powerN : null,
+      powerLimitW: Number.isFinite(lim) ? lim : null,
+      powerDefaultW: Number.isFinite(def) ? def : null,
+      powerMinW: Number.isFinite(minL) ? minL : null,
+      powerMaxW: Number.isFinite(maxL) ? maxL : null,
     });
   }
   return gpus;
@@ -183,7 +204,7 @@ function parseLmsPs(stdout) {
 
 export async function collectMetrics(cfg = loadConfig()) {
   const nvidiaCmd =
-    "nvidia-smi --query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total,fan.speed,power.draw --format=csv,noheader,nounits 2>/dev/null";
+    "nvidia-smi --query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total,fan.speed,power.draw,power.limit,power.default_limit,power.min_limit,power.max_limit --format=csv,noheader,nounits 2>/dev/null";
   const memCmd = "cat /proc/meminfo";
   const cpuCmd =
     "head -1 /proc/stat; sleep 0.35; head -1 /proc/stat";

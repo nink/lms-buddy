@@ -110,6 +110,7 @@ function readControl() {
 }
 
 function readSettings() {
+  const effort = document.getElementById("reasoning").value || "low";
   const base = {
     pleCpu: document.getElementById("tog-ple").classList.contains("on"),
     lazyMode: document.getElementById("lazy").value,
@@ -118,7 +119,8 @@ function readSettings() {
     gpuLayers: document.getElementById("ngl").value || "all",
     kvQuant: document.getElementById("kvquant").value,
     mmproj: document.getElementById("tog-mmproj").classList.contains("on"),
-    thinking: document.getElementById("tog-think").classList.contains("on"),
+    reasoningEffort: effort,
+    thinking: effort !== "off",
   };
   const extra = parseAdvancedExtra();
   return { ...base, ...extra, ...pickKnown(extra) };
@@ -152,6 +154,7 @@ function omit(obj, keys) {
 }
 
 function buildAdvancedDocument() {
+  const effort = document.getElementById("reasoning").value || "low";
   return {
     control: readControl(),
     settings: {
@@ -162,7 +165,8 @@ function buildAdvancedDocument() {
       gpuLayers: document.getElementById("ngl").value || "all",
       kvQuant: document.getElementById("kvquant").value,
       mmproj: document.getElementById("tog-mmproj").classList.contains("on"),
-      thinking: document.getElementById("tog-think").classList.contains("on"),
+      reasoningEffort: effort,
+      thinking: effort !== "off",
     },
     // Free-form extras for wrappers / notes — edit below or add keys
     extras: config?.advanced?.extras || {
@@ -210,7 +214,21 @@ function applyAdvancedToControl(doc) {
   if (s.gpuLayers) document.getElementById("ngl").value = s.gpuLayers;
   if (s.kvQuant) document.getElementById("kvquant").value = s.kvQuant;
   if (typeof s.mmproj === "boolean") setToggle("tog-mmproj", s.mmproj);
-  if (typeof s.thinking === "boolean") setToggle("tog-think", s.thinking);
+  applyReasoningToForm(s);
+}
+
+function applyReasoningToForm(s = {}) {
+  const sel = document.getElementById("reasoning");
+  let effort = s.reasoningEffort || s.reasoning;
+  if (!effort && typeof s.thinking === "boolean") {
+    effort = s.thinking ? "low" : "off";
+  }
+  effort = String(effort || "low").toLowerCase();
+  if (effort === "none" || effort === "false") effort = "off";
+  if (![...sel.options].some((o) => o.value === effort)) {
+    effort = "low";
+  }
+  sel.value = effort;
 }
 
 function applyConfigToForm(cfg) {
@@ -245,7 +263,7 @@ function applyConfigToForm(cfg) {
   document.getElementById("ngl").value = s.gpuLayers || "all";
   document.getElementById("kvquant").value = s.kvQuant || "q8_0";
   setToggle("tog-mmproj", s.mmproj !== false);
-  setToggle("tog-think", Boolean(s.thinking));
+  applyReasoningToForm(s);
 
   if (cfg.advancedRaw) {
     document.getElementById("advanced-raw").value = cfg.advancedRaw;
@@ -294,6 +312,38 @@ function fillModels(models) {
   sel.value = seen.has(current) ? current : "ud";
 }
 
+function tempBand(tempC) {
+  if (tempC == null) return { cls: "", color: "#4ae89a", pct: 0 };
+  // Map 35–90°C → 0–100 for dial; color cool→crit
+  const pct = Math.max(0, Math.min(100, ((tempC - 30) / 60) * 100));
+  let cls = "temp-cool";
+  let color = "#3dff9a";
+  if (tempC >= 82) {
+    cls = "temp-crit";
+    color = "#ff4d4d";
+  } else if (tempC >= 72) {
+    cls = "temp-hot";
+    color = "#ff8a3d";
+  } else if (tempC >= 58) {
+    cls = "temp-warm";
+    color = "#f0c45a";
+  }
+  return { cls, color, pct };
+}
+
+function powerPresetsFor(g) {
+  const min = g.powerMinW ?? 100;
+  const def = g.powerDefaultW ?? g.powerLimitW ?? min;
+  const max = g.powerMaxW ?? def;
+  const span = Math.max(1, max - min);
+  return {
+    eco: Math.round(min + span * 0.2),
+    longJob: Math.round(min + span * 0.45),
+    default: Math.round(def),
+    boost: Math.round(max),
+  };
+}
+
 function renderGpus(gpus) {
   const box = document.getElementById("gpus");
   if (!gpus?.length) {
@@ -302,30 +352,192 @@ function renderGpus(gpus) {
   }
   box.innerHTML = gpus
     .map((g) => {
-      const hot = g.tempC != null && g.tempC >= 72 ? " hot" : "";
+      const band = tempBand(g.tempC);
       const temp = g.tempC != null ? `${g.tempC}°` : "—";
       const util = g.utilPct != null ? g.utilPct : 0;
+      const vramPct =
+        g.vramUsedMiB != null && g.vramTotalMiB
+          ? Math.round((g.vramUsedMiB / g.vramTotalMiB) * 100)
+          : 0;
       const vram =
         g.vramUsedMiB != null && g.vramTotalMiB != null
           ? `${Math.round((g.vramUsedMiB / 1024) * 10) / 10}/${Math.round((g.vramTotalMiB / 1024) * 10) / 10}G`
           : "";
+      const lim =
+        g.powerLimitW != null ? ` / ${Math.round(g.powerLimitW)}W` : "";
       const pwr =
-        g.powerW != null ? ` · ${Math.round(g.powerW)}W` : "";
+        g.powerW != null ? `${Math.round(g.powerW)}W${lim}` : "";
       const fan =
         g.fanPct != null
-          ? ` · fan ${g.fanPct}%`
+          ? `fan ${g.fanPct}%`
           : g.name === "CMP"
-            ? " · fan n/a"
+            ? "fan n/a"
             : "";
-      return `<div class="gpu">
+      return `<div class="gpu ${band.cls}" style="--g-accent:${band.color}">
         <div class="n">${g.index} ${escapeHtml(g.name)}</div>
-        <div class="t${hot}">${temp}</div>
-        <div class="sub">${util}%${vram ? ` · ${vram}` : ""}${pwr}${fan}</div>
-        <div class="gbar"><i style="width:${util}%"></i></div>
+        <div class="t">${temp}</div>
+        <div class="sub">${util}% · ${vram || "—"}${pwr ? ` · ${pwr}` : ""}${fan ? ` · ${fan}` : ""}</div>
+        <div class="gbar" title="GPU util"><i style="width:${util}%"></i></div>
+        <div class="gbar2" title="VRAM"><i style="width:${vramPct}%"></i></div>
       </div>`;
     })
     .join("");
 }
+
+function renderGpuGauges(gpus) {
+  const box = document.getElementById("gpu-gauges");
+  if (!box) return;
+  if (!gpus?.length) {
+    box.innerHTML = "";
+    return;
+  }
+  // Arc length for path roughly semicircle r=40 → π*40 ≈ 125.6
+  const ARC = 126;
+  box.innerHTML = gpus
+    .map((g) => {
+      const band = tempBand(g.tempC);
+      const offset = ARC - (ARC * band.pct) / 100;
+      const util = g.utilPct ?? 0;
+      const pwr =
+        g.powerW != null
+          ? `${Math.round(g.powerW)}W`
+          : "—";
+      const lim =
+        g.powerLimitW != null ? `cap ${Math.round(g.powerLimitW)}W` : "";
+      return `<div class="gauge ${band.cls}" style="--g-accent:${band.color}">
+        <svg class="gauge-svg" viewBox="0 0 100 62" aria-hidden="true">
+          <path class="track" d="M 12 54 A 38 38 0 0 1 88 54" />
+          <path class="arc" d="M 12 54 A 38 38 0 0 1 88 54"
+            stroke-dasharray="${ARC}" stroke-dashoffset="${offset}" />
+        </svg>
+        <div class="gauge-readout">${g.tempC != null ? `${g.tempC}°` : "—"}</div>
+        <div class="gauge-label">${g.index} ${escapeHtml(g.name)}</div>
+        <div class="gauge-meta">${util}% util · ${pwr}${lim ? `<br>${lim}` : ""}</div>
+      </div>`;
+    })
+    .join("");
+}
+
+function renderPowerPanel(gpus) {
+  const box = document.getElementById("power-panel");
+  if (!box) return;
+  if (!gpus?.length) {
+    box.innerHTML = `<div class="hint">No GPU power data yet.</div>`;
+    return;
+  }
+  // Don't rebuild if user is dragging a slider
+  if (box.querySelector(".power-slider:active")) return;
+
+  box.innerHTML = gpus
+    .map((g) => {
+      const min = Math.round(g.powerMinW ?? 100);
+      const max = Math.round(g.powerMaxW ?? 300);
+      const cur = Math.round(g.powerLimitW ?? g.powerDefaultW ?? max);
+      const draw = g.powerW != null ? Math.round(g.powerW) : "—";
+      const p = powerPresetsFor(g);
+      return `<div class="power-card" data-gpu="${g.index}">
+        <div class="ph">
+          <b>${g.index} ${escapeHtml(g.name)}</b>
+          <span>now ${draw}W · limit <b class="plim">${cur}</b>W · ${min}–${max}</span>
+        </div>
+        <input class="power-slider" type="range" min="${min}" max="${max}" step="5" value="${cur}" data-index="${g.index}" />
+        <div class="power-presets">
+          <button type="button" data-index="${g.index}" data-w="${p.eco}">Eco ${p.eco}W</button>
+          <button type="button" data-index="${g.index}" data-w="${p.longJob}">Long job ${p.longJob}W</button>
+          <button type="button" data-index="${g.index}" data-w="${p.default}">Default ${p.default}W</button>
+          <button type="button" data-index="${g.index}" data-w="${p.boost}">Boost ${p.boost}W</button>
+          <button type="button" class="primary" data-apply="${g.index}">Apply</button>
+        </div>
+      </div>`;
+    })
+    .join("");
+}
+
+let lastPowerGpuKey = "";
+function maybeRenderPowerPanel(gpus) {
+  const key = (gpus || [])
+    .map(
+      (g) =>
+        `${g.index}:${Math.round(g.powerLimitW || 0)}:${Math.round(g.powerMinW || 0)}:${Math.round(g.powerMaxW || 0)}`,
+    )
+    .join("|");
+  // Refresh panel when limits change or first paint; keep slider edits otherwise
+  const box = document.getElementById("power-panel");
+  const focused = box?.contains(document.activeElement);
+  if (!focused && key !== lastPowerGpuKey) {
+    lastPowerGpuKey = key;
+    renderPowerPanel(gpus);
+  } else if (!box?.innerHTML) {
+    renderPowerPanel(gpus);
+  } else {
+    // Update live draw / limit labels without nuking sliders
+    for (const g of gpus || []) {
+      const card = box.querySelector(`.power-card[data-gpu="${g.index}"]`);
+      if (!card) continue;
+      const span = card.querySelector(".ph span");
+      const draw = g.powerW != null ? Math.round(g.powerW) : "—";
+      const lim = Math.round(g.powerLimitW ?? 0);
+      const min = Math.round(g.powerMinW ?? 100);
+      const max = Math.round(g.powerMaxW ?? 300);
+      if (span) {
+        span.innerHTML = `now ${draw}W · limit <b class="plim">${lim}</b>W · ${min}–${max}`;
+      }
+    }
+  }
+}
+
+async function applyGpuPower(index, watts) {
+  setStatus("status-power", `Setting GPU ${index} → ${watts}W…`);
+  try {
+    const r = await api("/api/gpu-power", {
+      method: "POST",
+      body: JSON.stringify({ index, watts }),
+    });
+    if (r.ok) {
+      setStatus(
+        "status-power",
+        `<span class="ok">GPU ${r.index}</span> limit ${r.applied}W (range ${r.minW}–${r.maxW})`,
+      );
+      lastPowerGpuKey = "";
+      refreshMetrics();
+    } else {
+      setStatus(
+        "status-power",
+        `<span class="err">${escapeHtml(r.error || r.note || "Failed")}</span>`,
+      );
+    }
+  } catch (e) {
+    setStatus("status-power", `<span class="err">${escapeHtml(e.message)}</span>`);
+  }
+}
+
+document.getElementById("power-panel")?.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-w], button[data-apply]");
+  if (!btn) return;
+  const card = btn.closest(".power-card");
+  const slider = card?.querySelector(".power-slider");
+  if (btn.hasAttribute("data-w")) {
+    const w = Number(btn.getAttribute("data-w"));
+    if (slider) slider.value = String(w);
+    const plim = card.querySelector(".plim");
+    if (plim) plim.textContent = String(w);
+  }
+  if (btn.hasAttribute("data-apply") || btn.hasAttribute("data-w")) {
+    const index = Number(btn.getAttribute("data-index") || btn.getAttribute("data-apply"));
+    const watts = Number(slider?.value);
+    if (Number.isFinite(index) && Number.isFinite(watts)) {
+      applyGpuPower(index, watts);
+    }
+  }
+});
+
+document.getElementById("power-panel")?.addEventListener("input", (e) => {
+  const sl = e.target.closest(".power-slider");
+  if (!sl) return;
+  const card = sl.closest(".power-card");
+  const plim = card?.querySelector(".plim");
+  if (plim) plim.textContent = sl.value;
+});
 
 function renderMetrics(m) {
   const model = m.model?.id || "—";
@@ -351,6 +563,8 @@ function renderMetrics(m) {
       ? `${ram.ramUsedGiB}/${ram.ramTotalGiB}G`
       : "—";
   renderGpus(m.gpus);
+  renderGpuGauges(m.gpus);
+  maybeRenderPowerPanel(m.gpus);
   document.getElementById("activity").innerHTML = escapeHtml(m.activity || "");
   if (m.errors?.length && !m.gpus?.length) {
     document.getElementById("activity").innerHTML =
@@ -363,9 +577,11 @@ function renderMetrics(m) {
     ? `${load[0]} ${load[1]} ${load[2]}`
     : "—";
   document.getElementById("d-threads").textContent =
-    m.cpuThreads != null
-      ? `${m.cpuThreads} threads${m.cpuModel ? ` · ${m.cpuModel}` : ""}`
-      : "—";
+    m.cpuPct != null
+      ? `${m.cpuPct}% · ${m.cpuThreads != null ? m.cpuThreads + " thr" : ""}${m.cpuModel ? ` · ${m.cpuModel}` : ""}`
+      : m.cpuThreads != null
+        ? `${m.cpuThreads} threads${m.cpuModel ? ` · ${m.cpuModel}` : ""}`
+        : "—";
   document.getElementById("d-ram").textContent =
     ram.ramTotalGiB != null
       ? `${ram.ramUsedGiB} / ${ram.ramTotalGiB} GiB (${ram.ramPct ?? "—"}%)`
@@ -382,6 +598,18 @@ function renderMetrics(m) {
       : "—";
   document.getElementById("d-parallel").textContent =
     m.parallel != null ? String(m.parallel) : "—";
+
+  // Moving bars
+  const setBar = (id, pct) => {
+    const el = document.getElementById(id);
+    if (el) el.style.width = `${Math.max(0, Math.min(100, pct || 0))}%`;
+  };
+  setBar("bar-cpu", m.cpuPct);
+  setBar("bar-ram", ram.ramPct);
+  setBar("bar-disk", disk.pct);
+  if (load?.[0] != null && m.cpuThreads) {
+    setBar("bar-load", (load[0] / m.cpuThreads) * 100);
+  }
 
   const loaded = m.loaded || [];
   document.getElementById("d-loaded").textContent = loaded.length
@@ -449,6 +677,7 @@ function readAdvancedPayload() {
 }
 
 function readSettingsGuiOnly() {
+  const effort = document.getElementById("reasoning").value || "low";
   return {
     pleCpu: document.getElementById("tog-ple").classList.contains("on"),
     lazyMode: document.getElementById("lazy").value,
@@ -457,7 +686,8 @@ function readSettingsGuiOnly() {
     gpuLayers: document.getElementById("ngl").value || "all",
     kvQuant: document.getElementById("kvquant").value,
     mmproj: document.getElementById("tog-mmproj").classList.contains("on"),
-    thinking: document.getElementById("tog-think").classList.contains("on"),
+    reasoningEffort: effort,
+    thinking: effort !== "off",
   };
 }
 
@@ -591,7 +821,7 @@ document.getElementById("btn-load").addEventListener("click", async () => {
   }
 });
 
-["model", "ctx", "gpu", "parallel", "lazy", "loadmode", "ncpu", "ngl", "kvquant"].forEach(
+["model", "ctx", "gpu", "parallel", "lazy", "loadmode", "ncpu", "ngl", "kvquant", "reasoning"].forEach(
   (id) => {
     document.getElementById(id)?.addEventListener("change", syncAdvancedFromControl);
   },

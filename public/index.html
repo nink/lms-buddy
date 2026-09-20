@@ -40,14 +40,24 @@
 
     <div class="body">
       <div class="panel" id="panel-monitor" role="tabpanel">
+        <div class="gauge-row" id="gpu-gauges"></div>
+
         <div class="mon-grid" id="mon-detail">
-          <div class="mon-card"><div class="k">Load avg</div><div class="v" id="d-load">—</div></div>
-          <div class="mon-card"><div class="k">CPU threads</div><div class="v" id="d-threads">—</div></div>
-          <div class="mon-card"><div class="k">RAM used</div><div class="v" id="d-ram">—</div></div>
+          <div class="mon-card pulse-card"><div class="k">Load avg</div><div class="v" id="d-load">—</div><div class="hbar"><i id="bar-load"></i></div></div>
+          <div class="mon-card"><div class="k">CPU</div><div class="v" id="d-threads">—</div><div class="hbar"><i id="bar-cpu"></i></div></div>
+          <div class="mon-card"><div class="k">RAM used</div><div class="v" id="d-ram">—</div><div class="hbar"><i id="bar-ram"></i></div></div>
           <div class="mon-card"><div class="k">Swap</div><div class="v" id="d-swap">—</div></div>
-          <div class="mon-card"><div class="k">Disk /</div><div class="v" id="d-disk">—</div></div>
+          <div class="mon-card"><div class="k">Disk /</div><div class="v" id="d-disk">—</div><div class="hbar"><i id="bar-disk"></i></div></div>
           <div class="mon-card"><div class="k">Parallel</div><div class="v" id="d-parallel">—</div></div>
         </div>
+
+        <div class="section-title">
+          Power limits
+          <button type="button" class="help" data-tip="Caps GPU wattage via nvidia-smi -pl (sudo). Always clamped to the card’s min/max. Eco/Long job = cooler quieter runs; Boost = max allowed. Resets after reboot unless persistence holds.">?</button>
+        </div>
+        <div id="power-panel" class="power-panel"></div>
+        <div class="status" id="status-power">Ready.</div>
+
         <div class="section-title">Loaded models</div>
         <div class="mono-block" id="d-loaded">—</div>
         <div class="section-title">Host</div>
@@ -168,13 +178,19 @@
           </div>
           <div class="toggle on" id="tog-mmproj" data-key="mmproj" role="switch" aria-checked="true"></div>
         </div>
-        <div class="toggle-row">
-          <div class="label-row" style="margin:0">
-            Thinking
-            <button type="button" class="help" data-tip="Off is faster for tool agents. Stored in sidecar; apply in client when LMS supports it.">?</button>
+        <label class="field">
+          <div class="label-row">
+            Reasoning effort
+            <button type="button" class="help" data-tip="How hard the model thinks. low = thinking on but brief (good default). off disables. Some models only honor off/on; low/medium/high are for effort-aware models and OpenAI-compatible clients (reasoning_effort). Stored in sidecar — clients should pass it on chat requests.">?</button>
           </div>
-          <div class="toggle" id="tog-think" data-key="thinking" role="switch" aria-checked="false"></div>
-        </div>
+          <select id="reasoning">
+            <option value="off">off</option>
+            <option value="low" selected>low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="on">on (full)</option>
+          </select>
+        </label>
 
         <div class="row-btns" style="margin-top:10px">
           <button class="btn primary" id="btn-save">Save settings</button>

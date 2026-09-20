@@ -31,14 +31,14 @@ Optional: `npm start` runs the Electron window without packaging.
 Compact corner window — live GPU/CPU/RAM on every tab.
 
 <p align="center">
-  <img src="docs/screenshots/monitor-v2.png" alt="Monitor" width="280" />
+  <img src="docs/screenshots/monitor-v3.png" alt="Monitor" width="280" />
   &nbsp;
-  <img src="docs/screenshots/control-v2.png" alt="Control" width="280" />
+  <img src="docs/screenshots/control-v3.png" alt="Control" width="280" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/advanced-v2.png" alt="Advanced" width="280" />
+  <img src="docs/screenshots/advanced-v3.png" alt="Advanced" width="280" />
   &nbsp;
-  <img src="docs/screenshots/connection-v2.png" alt="Connection" width="280" />
+  <img src="docs/screenshots/connection-v3.png" alt="Connection" width="280" />
 </p>
 
 ## Tabs
@@ -46,7 +46,7 @@ Compact corner window — live GPU/CPU/RAM on every tab.
 | Tab | Purpose |
 |-----|---------|
 | **Monitor** (default) | Live metrics only — model, state, CPU, RAM, per-GPU temp/util/VRAM. |
-| **Control** | Model id, context, GPU offload, parallel, GUI extras (PLE, lazy, load-mode, KV, mmproj, thinking). **Save settings**, **Unload all**, **Load now**. |
+| **Control** | Model id, context, GPU offload, parallel, GUI extras (PLE, lazy, load-mode, KV, mmproj, **reasoning effort**). **Save settings**, **Unload all**, **Load now**. |
 | **Advanced** | Free-form JSON for anything the Control GUI doesn’t cover — saved with the model sidecar. |
 | **Connection** | Host, LMS port (default `1234`), optional API key, SSH user / password / key path. |
 
@@ -67,7 +67,20 @@ Compact corner window — live GPU/CPU/RAM on every tab.
 
 - PLE / n-gram → CPU (`--override-tensor`)
 - lazy-mode / load-mode (`dio` / `mmap` / `mlock`)
-- KV cache quant, mmproj path, thinking toggle
+- KV cache quant, mmproj path, reasoning effort / thinking (client chat params: `reasoning` / `reasoning_effort`)
+
+## GPU power limits (Monitor)
+
+Buddy can cap each GPU with `nvidia-smi -pl` (sudo). Limits are always clamped to the card’s reported **min–max** (safe).
+
+On your SER box typical ranges:
+
+| GPU | Default | Min–Max | Long-job idea |
+|-----|---------|---------|---------------|
+| CMP 170HX | 250W | 100–300W | ~150–200W |
+| RTX 3090 ×2 | 390W | 100–480W | ~250–300W |
+
+Needs SSH password saved in Connection (for `sudo -S`), or passwordless sudo for `nvidia-smi`. Persistence mode is enabled when applying; full reboot may still reset limits.
 
 **Known LMS caveat:** Just-in-time (JIT) loads via the OpenAI API have historically ignored some per-model defaults. Prefer **Load now** (or preload with `lms load`) when you need guarantees.
 

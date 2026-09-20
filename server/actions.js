@@ -5,10 +5,32 @@ import { loadConfig, updateConfig } from "./config.js";
  * Build LLM load flags that lms load understands:
  *   --gpu, --context-length, --parallel
  *
- * Advanced flags (PLE, lazy, load-mode, kv, mmproj, thinking) are written
- * best-effort into user-concrete-model-default-config + a buddy sidecar JSON.
+ * Advanced flags (PLE, lazy, load-mode, kv, mmproj, thinking / reasoningEffort)
+ * are written best-effort into user-concrete-model-default-config + a buddy sidecar JSON.
  * Documented limits: JIT may ignore some; PLE/n-gram often needs wrapper/override.
+ * reasoningEffort is primarily a *client* chat param (reasoning / reasoning_effort).
  */
+
+export function normalizeReasoningEffort(settings = {}) {
+  const raw = settings.reasoningEffort ?? settings.reasoning;
+  if (typeof raw === "string") {
+    const v = raw.trim().toLowerCase();
+    if (["off", "none", "false", "0"].includes(v)) return "off";
+    if (["low", "medium", "high", "on"].includes(v)) return v;
+  }
+  if (typeof settings.thinking === "boolean") {
+    return settings.thinking ? "low" : "off";
+  }
+  return "low";
+}
+
+/** OpenAI-compatible reasoning_effort value (none disables). */
+export function toOpenAiReasoningEffort(effort) {
+  const e = normalizeReasoningEffort({ reasoningEffort: effort });
+  if (e === "off") return "none";
+  if (e === "on") return "high";
+  return e;
+}
 
 export function buildLoadArgs(control = {}, settings = {}) {
   const modelId = control.modelId || "ud";
@@ -75,13 +97,32 @@ export function buildConcreteConfig(control, settings) {
   // Strip undefined
   const clean = fields.filter((f) => f.value !== undefined);
 
+  const reasoningEffort = normalizeReasoningEffort(settings);
+  const thinking = reasoningEffort !== "off";
+  const settingsNorm = {
+    ...settings,
+    reasoningEffort,
+    thinking,
+  };
+
   return {
     // Sidecar for LMS Buddy / wrappers
     buddy: {
       version: 1,
       modelId: control.modelId,
       control,
-      settings,
+      settings: settingsNorm,
+      clientApi: {
+        "api/v1/chat": { reasoning: reasoningEffort },
+        "v1/chat/completions": {
+          reasoning_effort: toOpenAiReasoningEffort(reasoningEffort),
+        },
+        "v1/responses": {
+          reasoning: {
+            effort: toOpenAiReasoningEffort(reasoningEffort),
+          },
+        },
+      },
       savedAt: new Date().toISOString(),
       notes: {
         ple:
@@ -89,6 +130,8 @@ export function buildConcreteConfig(control, settings) {
         lazyLoadMode:
           "lazy-mode / load-mode (dio/mmap/mlock) often require llama-server wrapper args.",
         kvQuant: "KV quant may only apply via engine/wrapper; concrete config best-effort.",
+        reasoning:
+          "Pass clientApi fields on chat requests. Some models only support off/on; low/medium/high need effort-aware models.",
         jit: "OpenAI JIT load has historically ignored some per-model defaults — prefer lms load or Load now.",
       },
     },
@@ -159,8 +202,16 @@ echo LOAD_HINT=${bashQuote(loadInfo.cmd)}
   const r = await sshExec(script, 25000, cfg);
   const ok = r.stdout.includes("SAVE_OK") && r.code === 0;
 
-  // Persist locally too
-  updateConfig({ control, settings });
+  // Persist locally too (normalize reasoning)
+  const reasoningEffort = normalizeReasoningEffort(settings);
+  updateConfig({
+    control,
+    settings: {
+      ...settings,
+      reasoningEffort,
+      thinking: reasoningEffort !== "off",
+    },
+  });
 
   return {
     ok,
@@ -169,9 +220,21 @@ echo LOAD_HINT=${bashQuote(loadInfo.cmd)}
     supported: {
       viaLmsLoad: ["gpu", "context-length", "parallel"],
       viaConcreteBestEffort: ["contextLength", "gpu.offloadRatio", "nParallel"],
-      needsWrapper: ["ple/n-gram override", "lazy-mode", "load-mode", "kv quant", "mmproj", "thinking"],
+      needsWrapper: [
+        "ple/n-gram override",
+        "lazy-mode",
+        "load-mode",
+        "kv quant",
+        "mmproj",
+        "thinking/reasoningEffort (client chat param)",
+      ],
     },
-    settings: { ...control, ...settings },
+    settings: {
+      ...control,
+      ...settings,
+      reasoningEffort: normalizeReasoningEffort(settings),
+      thinking: normalizeReasoningEffort(settings) !== "off",
+    },
     stdout: r.stdout.trim(),
     stderr: r.stderr.trim(),
     code: r.code,
@@ -222,6 +285,109 @@ export async function loadModelNow(cfg = loadConfig()) {
     saveResult,
     load: { stdout: r.stdout.trim(), stderr: r.stderr.trim(), code: r.code },
     verify: { stdout: verify.stdout.trim(), stderr: verify.stderr.trim() },
+  };
+}
+
+/**
+ * Safe GPU power ceiling via nvidia-smi -pl (needs sudo on SER).
+ * Always clamps to the card's reported min/max — never above max or below min.
+ */
+export async function setGpuPowerLimit(
+  { index, watts, enablePersistence = true } = {},
+  cfg = loadConfig(),
+) {
+  const idx = Number(index);
+  if (!Number.isInteger(idx) || idx < 0) {
+    return { ok: false, error: "index must be a non-negative integer" };
+  }
+
+  const q = await sshExec(
+    `nvidia-smi -i ${idx} --query-gpu=name,power.limit,power.default_limit,power.min_limit,power.max_limit,power.draw --format=csv,noheader,nounits 2>/dev/null`,
+    15000,
+    cfg,
+  );
+  if (q.code !== 0 || !q.stdout.trim()) {
+    return {
+      ok: false,
+      error: "Could not read GPU power limits",
+      stderr: q.stderr.trim(),
+    };
+  }
+  const parts = q.stdout.trim().split(",").map((p) => p.trim());
+  const [name, curLim, defLim, minLim, maxLim, draw] = parts;
+  const minW = Number(minLim);
+  const maxW = Number(maxLim);
+  const defW = Number(defLim);
+  let want = Number(watts);
+  if (!Number.isFinite(want)) {
+    return { ok: false, error: "watts must be a number" };
+  }
+  if (!Number.isFinite(minW) || !Number.isFinite(maxW)) {
+    return { ok: false, error: "GPU did not report min/max power limits" };
+  }
+  // Clamp hard to NVIDIA-reported range (safe).
+  want = Math.round(Math.max(minW, Math.min(maxW, want)));
+
+  const sudoPass = cfg.sshPassword || "";
+  const sudoPrefix = sudoPass
+    ? `echo ${bashQuote(sudoPass)} | sudo -S -p '' `
+    : "sudo -n ";
+
+  const cmds = [];
+  if (enablePersistence) {
+    cmds.push(`${sudoPrefix}nvidia-smi -i ${idx} -pm 1`);
+  }
+  cmds.push(`${sudoPrefix}nvidia-smi -i ${idx} -pl ${want}`);
+  cmds.push(
+    `nvidia-smi -i ${idx} --query-gpu=power.limit,power.draw --format=csv,noheader,nounits`,
+  );
+
+  const r = await sshExec(cmds.join(" && "), 30000, cfg);
+  const verifyLine = (r.stdout || "").trim().split(/\r?\n/).pop() || "";
+  const [newLim, newDraw] = verifyLine.split(",").map((p) => Number(String(p).trim()));
+  const applied =
+    Number.isFinite(newLim) && Math.abs(newLim - want) < 1.5;
+
+  // Remember preferred limits locally
+  const power = { ...(cfg.power || {}), limits: { ...(cfg.power?.limits || {}) } };
+  power.limits[String(idx)] = want;
+  updateConfig({ power });
+
+  return {
+    ok: applied && r.code === 0,
+    index: idx,
+    name,
+    requested: Number(watts),
+    applied: want,
+    previousLimitW: Number(curLim) || null,
+    defaultLimitW: Number.isFinite(defW) ? defW : null,
+    minW,
+    maxW,
+    powerLimitW: Number.isFinite(newLim) ? newLim : null,
+    powerDrawW: Number.isFinite(newDraw) ? newDraw : Number(draw) || null,
+    stdout: r.stdout.trim(),
+    stderr: r.stderr.trim(),
+    code: r.code,
+    note: applied
+      ? "Power limit set within NVIDIA min/max. Resets on full driver reload/reboot unless persistence sticks."
+      : "Failed — needs passwordless sudo for nvidia-smi, or SSH password in Connection for sudo -S.",
+  };
+}
+
+/** Suggested safe presets from card min/default/max. */
+export function powerPresets({ powerMinW, powerDefaultW, powerMaxW, name }) {
+  const min = Number(powerMinW) || 100;
+  const def = Number(powerDefaultW) || min;
+  const max = Number(powerMaxW) || def;
+  const span = max - min;
+  const eco = Math.round(min + span * 0.2);
+  const long = Math.round(min + span * 0.45); // long-job quiet
+  return {
+    eco: Math.max(min, Math.min(max, eco)),
+    longJob: Math.max(min, Math.min(max, long)),
+    default: Math.max(min, Math.min(max, def)),
+    boost: Math.max(min, Math.min(max, max)),
+    label: name || "GPU",
   };
 }
 

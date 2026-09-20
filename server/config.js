@@ -35,6 +35,9 @@ const DEFAULTS = {
   sshKeyPath: "",
   sshPort: 22,
   pollMs: 2000,
+  power: {
+    limits: {},
+  },
   control: {
     modelId: "ud",
     context: 32768,
@@ -49,7 +52,10 @@ const DEFAULTS = {
     gpuLayers: "all",
     kvQuant: "q8_0",
     mmproj: true,
-    thinking: false,
+    /** off | low | medium | high | on — low = thinking on, but not too much */
+    reasoningEffort: "low",
+    /** Derived: true when reasoningEffort is not off */
+    thinking: true,
   },
   advanced: {
     extras: {
@@ -138,6 +144,7 @@ export function publicConfig(cfg = loadConfig()) {
     pollMs: cfg.pollMs,
     control: cfg.control,
     settings: cfg.settings,
+    power: cfg.power || { limits: {} },
     advanced: cfg.advanced || DEFAULTS.advanced,
     advancedRaw: cfg.advancedRaw || "",
   };
