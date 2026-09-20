@@ -344,44 +344,8 @@ function powerPresetsFor(g) {
   };
 }
 
-function renderGpus(gpus) {
-  const box = document.getElementById("gpus");
-  if (!gpus?.length) {
-    box.innerHTML = `<div class="gpu"><div class="n">GPU</div><div class="t">—</div></div>`;
-    return;
-  }
-  box.innerHTML = gpus
-    .map((g) => {
-      const band = tempBand(g.tempC);
-      const temp = g.tempC != null ? `${g.tempC}°` : "—";
-      const util = g.utilPct != null ? g.utilPct : 0;
-      const vramPct =
-        g.vramUsedMiB != null && g.vramTotalMiB
-          ? Math.round((g.vramUsedMiB / g.vramTotalMiB) * 100)
-          : 0;
-      const vram =
-        g.vramUsedMiB != null && g.vramTotalMiB != null
-          ? `${Math.round((g.vramUsedMiB / 1024) * 10) / 10}/${Math.round((g.vramTotalMiB / 1024) * 10) / 10}G`
-          : "";
-      const lim =
-        g.powerLimitW != null ? ` / ${Math.round(g.powerLimitW)}W` : "";
-      const pwr =
-        g.powerW != null ? `${Math.round(g.powerW)}W${lim}` : "";
-      const fan =
-        g.fanPct != null
-          ? `fan ${g.fanPct}%`
-          : g.name === "CMP"
-            ? "fan n/a"
-            : "";
-      return `<div class="gpu ${band.cls}" style="--g-accent:${band.color}">
-        <div class="n">${g.index} ${escapeHtml(g.name)}</div>
-        <div class="t">${temp}</div>
-        <div class="sub">${util}% · ${vram || "—"}${pwr ? ` · ${pwr}` : ""}${fan ? ` · ${fan}` : ""}</div>
-        <div class="gbar" title="GPU util"><i style="width:${util}%"></i></div>
-        <div class="gbar2" title="VRAM"><i style="width:${vramPct}%"></i></div>
-      </div>`;
-    })
-    .join("");
+function renderGpus(_gpus) {
+  // Removed duplicate live-strip GPU cards — Monitor dials are the single GPU view.
 }
 
 function renderGpuGauges(gpus) {
@@ -398,12 +362,26 @@ function renderGpuGauges(gpus) {
       const band = tempBand(g.tempC);
       const offset = ARC - (ARC * band.pct) / 100;
       const util = g.utilPct ?? 0;
+      const vramPct =
+        g.vramUsedMiB != null && g.vramTotalMiB
+          ? Math.round((g.vramUsedMiB / g.vramTotalMiB) * 100)
+          : 0;
+      const vram =
+        g.vramUsedMiB != null && g.vramTotalMiB != null
+          ? `${(Math.round((g.vramUsedMiB / 1024) * 10) / 10)}/${(Math.round((g.vramTotalMiB / 1024) * 10) / 10)}G`
+          : "—";
       const pwr =
         g.powerW != null
           ? `${Math.round(g.powerW)}W`
           : "—";
       const lim =
-        g.powerLimitW != null ? `cap ${Math.round(g.powerLimitW)}W` : "";
+        g.powerLimitW != null ? ` / ${Math.round(g.powerLimitW)}W` : "";
+      const fan =
+        g.fanPct != null
+          ? ` · fan ${g.fanPct}%`
+          : g.name === "CMP"
+            ? " · fan n/a"
+            : "";
       return `<div class="gauge ${band.cls}" style="--g-accent:${band.color}">
         <svg class="gauge-svg" viewBox="0 0 100 62" aria-hidden="true">
           <path class="track" d="M 12 54 A 38 38 0 0 1 88 54" />
@@ -412,7 +390,9 @@ function renderGpuGauges(gpus) {
         </svg>
         <div class="gauge-readout">${g.tempC != null ? `${g.tempC}°` : "—"}</div>
         <div class="gauge-label">${g.index} ${escapeHtml(g.name)}</div>
-        <div class="gauge-meta">${util}% util · ${pwr}${lim ? `<br>${lim}` : ""}</div>
+        <div class="gauge-meta">${util}% · ${vram}<br>${pwr}${lim}${fan}</div>
+        <div class="gbar" title="GPU util"><i style="width:${util}%"></i></div>
+        <div class="gbar2" title="VRAM"><i style="width:${vramPct}%"></i></div>
       </div>`;
     })
     .join("");
