@@ -26,13 +26,25 @@ Output: `dist/LMS-Buddy-<version>-portable.exe` — copy to Desktop and double-c
 Optional: `npm start` runs the Electron window without packaging.  
 `npm run start:web` serves the UI in a browser (`http://127.0.0.1:3847`) for debugging.
 
+## Screenshots
+
+Compact corner window — live GPU/CPU/RAM on every tab.
+
+| Monitor | Control |
+|:---:|:---:|
+| ![Monitor](docs/screenshots/monitor.png) | ![Control](docs/screenshots/control.png) |
+
+| Advanced | Connection |
+|:---:|:---:|
+| ![Advanced](docs/screenshots/advanced.png) | ![Connection](docs/screenshots/connection.png) |
+
 ## Tabs
 
 | Tab | Purpose |
 |-----|---------|
 | **Monitor** (default) | Live metrics only — model, state, CPU, RAM, per-GPU temp/util/VRAM. |
-| **Control** | Model id, context, GPU offload, parallel. **Save settings**, **Unload all**, **Load now**. |
-| **Settings** | PLE/n-gram, lazy-mode, load-mode, n-cpu-moe, KV quant, mmproj, thinking — with **?** tips. |
+| **Control** | Model id, context, GPU offload, parallel, GUI extras (PLE, lazy, load-mode, KV, mmproj, thinking). **Save settings**, **Unload all**, **Load now**. |
+| **Advanced** | Free-form JSON for anything the Control GUI doesn’t cover — saved with the model sidecar. |
 | **Connection** | Host, LMS port (default `1234`), optional API key, SSH user / password / key path. |
 
 ## What Save / Load write
