@@ -3,9 +3,28 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, "..");
-const DATA_DIR = path.join(ROOT, "data");
-const CONFIG_PATH = path.join(DATA_DIR, "config.json");
+
+/** App install root (public/, package). Overridable for Electron. */
+export let ROOT = process.env.LMS_BUDDY_ROOT
+  ? path.resolve(process.env.LMS_BUDDY_ROOT)
+  : path.resolve(__dirname, "..");
+
+/** Writable config dir. Overridable for Electron userData. */
+export let DATA_DIR = process.env.LMS_BUDDY_DATA_DIR
+  ? path.resolve(process.env.LMS_BUDDY_DATA_DIR)
+  : path.join(ROOT, "data");
+
+export let CONFIG_PATH = path.join(DATA_DIR, "config.json");
+
+export function setPaths({ root, dataDir } = {}) {
+  if (root) ROOT = path.resolve(root);
+  if (dataDir) DATA_DIR = path.resolve(dataDir);
+  CONFIG_PATH = path.join(DATA_DIR, "config.json");
+}
+
+export function getPaths() {
+  return { ROOT, DATA_DIR, CONFIG_PATH };
+}
 
 const DEFAULTS = {
   host: "192.168.72.70",
@@ -98,4 +117,4 @@ export function publicConfig(cfg = loadConfig()) {
   };
 }
 
-export { ROOT, DATA_DIR, CONFIG_PATH, DEFAULTS };
+export { DEFAULTS };

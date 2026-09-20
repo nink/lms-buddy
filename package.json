@@ -1,12 +1,17 @@
 {
   "name": "lms-buddy",
-  "version": "1.0.0",
-  "description": "Compact desktop/web utility for monitoring and configuring LM Studio on a remote host",
+  "version": "1.1.0",
+  "description": "Compact desktop utility for monitoring and configuring LM Studio on a remote host",
   "private": true,
   "type": "module",
+  "main": "electron/main.cjs",
+  "author": "nink",
+  "license": "MIT",
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "node --watch server/index.js"
+    "start": "electron .",
+    "start:web": "node server/index.js",
+    "dist": "electron-builder --win portable",
+    "dist:dir": "electron-builder --win dir"
   },
   "engines": {
     "node": ">=18"
@@ -15,5 +20,48 @@
     "express": "^4.21.2",
     "open": "^10.1.0",
     "ssh2": "^1.16.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.nink.lms-buddy",
+    "productName": "LMS Buddy",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "server/**/*",
+      "public/**/*",
+      "package.json",
+      "!data/**",
+      "!**/*.md"
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/ssh2/**/*",
+      "node_modules/cpu-features/**/*"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "LMS-Buddy-${version}-portable.exe"
+    }
   }
 }

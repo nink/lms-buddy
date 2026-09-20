@@ -1,25 +1,36 @@
 # LMS Buddy
 
-Compact local utility for **monitoring** and **configuring** [LM Studio](https://lmstudio.ai) on a remote host (your LAN box, a lab GPU server, etc.).
+Compact **desktop** utility for monitoring and configuring [LM Studio](https://lmstudio.ai) on a remote host.
 
-~400px corner-sized UI. Runs on your machine; talks to the LMS OpenAI-compatible HTTP API and uses SSH for `lms` CLI + `nvidia-smi`.
+Double-click **LMS Buddy.exe** — no Node/npm needed for day-to-day use.
 
-## Quick start
+## Download / run (Windows)
+
+1. Grab the latest **portable** build from [Releases](https://github.com/nink/lms-buddy/releases), **or** build once (below).
+2. Double-click `LMS-Buddy-*-portable.exe`.
+3. A small corner window opens. Use **Connection** once to set host / SSH.
+
+Settings are stored under your Windows user profile (`%APPDATA%\lms-buddy\`), not next to the exe.
+
+### Build a clickable exe (developers)
 
 ```bash
 git clone https://github.com/nink/lms-buddy.git
 cd lms-buddy
 npm install
-npm start
+npm run dist
 ```
 
-Opens `http://127.0.0.1:3847` in your browser (Windows-friendly). Set `LMS_BUDDY_NO_OPEN=1` to skip the browser launch.
+Output: `dist/LMS-Buddy-<version>-portable.exe` — copy to Desktop and double-click.
+
+Optional: `npm start` runs the Electron window without packaging.  
+`npm run start:web` serves the UI in a browser (`http://127.0.0.1:3847`) for debugging.
 
 ## Tabs
 
 | Tab | Purpose |
 |-----|---------|
-| **Monitor** (default) | Live metrics only — model, state, CPU, RAM, per-GPU temp/util/VRAM. UI collapses to monitor height. |
+| **Monitor** (default) | Live metrics only — model, state, CPU, RAM, per-GPU temp/util/VRAM. |
 | **Control** | Model id, context, GPU offload, parallel. **Save settings**, **Unload all**, **Load now**. |
 | **Settings** | PLE/n-gram, lazy-mode, load-mode, n-cpu-moe, KV quant, mmproj, thinking — with **?** tips. |
 | **Connection** | Host, LMS port (default `1234`), optional API key, SSH user / password / key path. |
@@ -51,21 +62,18 @@ Runs `lms unload --all` over SSH. Useful when a client’s eject is unreliable.
 
 ## Security
 
-- Connection secrets are stored only in local **`data/config.json`** (gitignored).
+- Connection secrets stay in local app data (gitignored `data/` when using web mode).
 - Prefer an SSH **private key** over a password when you can.
-- Do not commit `.env`, `data/`, or any file containing host passwords.
-- See `.env.example` for field names only.
+- Do not commit passwords or `data/config.json`.
 
 ## Architecture
 
 ```
-npm start  →  Express on 127.0.0.1:3847
-               ├─ static SPA (public/)
-               ├─ HTTP → remote LMS :port  (/v1/models, …)
-               └─ SSH  → lms ps / load / unload, nvidia-smi, config writes
+LMS Buddy.exe  →  Electron window
+                    └─ local Express on 127.0.0.1
+                         ├─ HTTP → remote LMS :port
+                         └─ SSH  → lms / nvidia-smi
 ```
-
-Stack: Node.js 18+, Express, `ssh2`. Optional Electron shell can wrap this later; browser is enough for day-to-day use.
 
 ## Example (SER-style)
 
