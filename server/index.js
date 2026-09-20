@@ -149,53 +149,46 @@ export function createApp() {
 }
 
 /**
- * @param {{ port?: number, openBrowser?: boolean, host?: string }} opts
+ * @param {{ port?: number, openBrowser?: boolean, host?: string, preferPort?: number }} opts
  * @returns {Promise<{ server: import('node:http').Server, port: number, url: string }>}
  */
 export function startServer(opts = {}) {
-  const preferred = Number(opts.port ?? process.env.PORT) || 3847;
+  const preferred =
+    Number(opts.port ?? opts.preferPort ?? process.env.PORT) || 3847;
   const openBrowser =
     opts.openBrowser ?? process.env.LMS_BUDDY_NO_OPEN !== "1";
   const host = opts.host || "127.0.0.1";
   const app = createApp();
 
-  return new Promise((resolve, reject) => {
-    const server = app.listen(preferred, host, async () => {
-      const addr = server.address();
-      const port = typeof addr === "object" && addr ? addr.port : preferred;
-      const url = `http://${host}:${port}`;
-      console.log(`LMS Buddy → ${url}`);
-      if (openBrowser) {
-        try {
-          await open(url);
-        } catch {
-          /* ok */
-        }
-      }
-      resolve({ server, port, url });
-    });
-    server.on("error", (err) => {
-      if (err && err.code === "EADDRINUSE" && !opts.port) {
-        // Retry on ephemeral port
-        const retry = app.listen(0, host, async () => {
-          const addr = retry.address();
-          const port = typeof addr === "object" && addr ? addr.port : 0;
-          const url = `http://${host}:${port}`;
-          console.log(`LMS Buddy → ${url} (port busy, using free port)`);
-          if (openBrowser) {
-            try {
-              await open(url);
-            } catch {
-              /* ok */
-            }
+  function listen(port) {
+    return new Promise((resolve, reject) => {
+      const server = app.listen(port, host, async () => {
+        const addr = server.address();
+        const bound =
+          typeof addr === "object" && addr ? addr.port : port;
+        const url = `http://${host}:${bound}`;
+        console.log(`LMS Buddy → ${url}`);
+        if (openBrowser) {
+          try {
+            await open(url);
+          } catch {
+            /* ok */
           }
-          resolve({ server: retry, port, url });
-        });
-        retry.on("error", reject);
-      } else {
-        reject(err);
-      }
+        }
+        resolve({ server, port: bound, url });
+      });
+      server.on("error", reject);
     });
+  }
+
+  return listen(preferred).catch(async (err) => {
+    if (err && err.code === "EADDRINUSE") {
+      console.warn(
+        `Port ${preferred} in use — falling back to a free port`,
+      );
+      return listen(0);
+    }
+    throw err;
   });
 }
 

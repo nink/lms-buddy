@@ -1,7 +1,7 @@
 /**
  * Electron shell — double-click LMS Buddy.exe, no npm required at runtime.
  */
-const { app, BrowserWindow, shell } = require("electron");
+const { app, BrowserWindow, shell, dialog } = require("electron");
 const path = require("node:path");
 
 let mainWindow = null;
@@ -12,7 +12,6 @@ async function boot() {
   const appRoot = isPackaged ? app.getAppPath() : path.join(__dirname, "..");
   const dataDir = path.join(app.getPath("userData"), "data");
 
-  // One-time migrate from old npm `data/config.json` if present
   const fs = require("node:fs");
   const legacyCfg = path.join(appRoot, "data", "config.json");
   const destCfg = path.join(dataDir, "config.json");
@@ -25,7 +24,6 @@ async function boot() {
   process.env.LMS_BUDDY_DATA_DIR = dataDir;
   process.env.LMS_BUDDY_NO_OPEN = "1";
 
-  // Dynamic import ESM server from CJS
   const { setPaths } = await import(
     pathToFileUrl(path.join(appRoot, "server", "config.js"))
   );
@@ -35,8 +33,9 @@ async function boot() {
     pathToFileUrl(path.join(appRoot, "server", "index.js"))
   );
 
+  // preferPort — if busy, server picks a free port (do not hard-fail)
   const { server, url } = await startServer({
-    port: 3847,
+    preferPort: 3847,
     openBrowser: false,
   });
   httpServer = server;
@@ -49,10 +48,16 @@ async function boot() {
     title: "LMS Buddy",
     autoHideMenuBar: true,
     backgroundColor: "#0e1412",
+    show: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
     },
+  });
+
+  mainWindow.once("ready-to-show", () => {
+    mainWindow.show();
+    mainWindow.focus();
   });
 
   mainWindow.loadURL(url);
@@ -75,12 +80,28 @@ function pathToFileUrl(p) {
   return "file://" + resolved;
 }
 
-app.whenReady().then(() => {
-  boot().catch((err) => {
-    console.error(err);
-    app.quit();
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
   });
-});
+
+  app.whenReady().then(() => {
+    boot().catch((err) => {
+      console.error(err);
+      dialog.showErrorBox(
+        "LMS Buddy failed to start",
+        String(err && err.stack ? err.stack : err),
+      );
+      app.quit();
+    });
+  });
+}
 
 app.on("window-all-closed", () => {
   if (httpServer) {
@@ -94,5 +115,10 @@ app.on("window-all-closed", () => {
 });
 
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) boot();
+  if (BrowserWindow.getAllWindows().length === 0) {
+    boot().catch((err) => {
+      dialog.showErrorBox("LMS Buddy failed to start", String(err));
+      app.quit();
+    });
+  }
 });
