@@ -19,7 +19,7 @@
     <nav class="tabs" role="tablist">
       <button class="tab active" data-tab="monitor" role="tab">Monitor</button>
       <button class="tab" data-tab="control" role="tab">Control</button>
-      <button class="tab" data-tab="settings" role="tab">Settings</button>
+      <button class="tab" data-tab="advanced" role="tab">Advanced</button>
       <button class="tab" data-tab="connection" role="tab">Connection</button>
     </nav>
 
@@ -39,11 +39,26 @@
     </div>
 
     <div class="body">
+      <div class="panel" id="panel-monitor" role="tabpanel">
+        <div class="mon-grid" id="mon-detail">
+          <div class="mon-card"><div class="k">Load avg</div><div class="v" id="d-load">—</div></div>
+          <div class="mon-card"><div class="k">CPU threads</div><div class="v" id="d-threads">—</div></div>
+          <div class="mon-card"><div class="k">RAM used</div><div class="v" id="d-ram">—</div></div>
+          <div class="mon-card"><div class="k">Swap</div><div class="v" id="d-swap">—</div></div>
+          <div class="mon-card"><div class="k">Disk /</div><div class="v" id="d-disk">—</div></div>
+          <div class="mon-card"><div class="k">Parallel</div><div class="v" id="d-parallel">—</div></div>
+        </div>
+        <div class="section-title">Loaded models</div>
+        <div class="mono-block" id="d-loaded">—</div>
+        <div class="section-title">Host</div>
+        <div class="mono-block" id="d-host">—</div>
+      </div>
+
       <div class="panel" id="panel-control" role="tabpanel">
         <label class="field">
           <div class="label-row">
             Model
-            <span class="help" tabindex="0">?<span class="tip">Bionic / clients should select this same id. Save settings so JIT (when honored) uses your defaults. Load now applies via <code>lms load</code>.</span></span>
+            <button type="button" class="help" data-tip="Bionic / clients should select this same id. Save settings so JIT (when honored) uses your defaults. Load now applies via lms load.">?</button>
           </div>
           <select id="model"></select>
         </label>
@@ -51,7 +66,7 @@
         <label class="field">
           <div class="label-row">
             Context
-            <span class="help tip-right" tabindex="0">?<span class="tip">Agents need ≥32k. Saved into LMS concrete defaults + passed on Load now.</span></span>
+            <button type="button" class="help" data-tip="Agents need ≥32k. Saved into LMS defaults + passed on Load now.">?</button>
           </div>
           <select id="ctx">
             <option>8192</option>
@@ -65,7 +80,7 @@
         <label class="field">
           <div class="label-row">
             GPU offload
-            <span class="help" tabindex="0">?<span class="tip">max = all layers on GPU. Passed as <code>lms load --gpu</code>.</span></span>
+            <button type="button" class="help" data-tip="max = all layers on GPU. Passed as lms load --gpu.">?</button>
           </div>
           <select id="gpu">
             <option selected>max</option>
@@ -78,28 +93,17 @@
         <label class="field">
           <div class="label-row">
             Parallel
-            <span class="help tip-right" tabindex="0">?<span class="tip">Concurrent prediction slots. Use 1 for a single agent.</span></span>
+            <button type="button" class="help" data-tip="Concurrent prediction slots. Use 1 for a single agent.">?</button>
           </div>
           <input type="number" id="parallel" value="1" min="1" max="16" />
         </label>
 
-        <div class="row-btns">
-          <button class="btn primary" id="btn-save">Save settings</button>
-          <button class="btn danger" id="btn-unload">Unload all</button>
-          <button class="btn ghost" id="btn-load">Load now</button>
-        </div>
-
-        <p class="hint">Save → persist LMS load defaults for this model. Load now runs <code>lms load</code> with gpu/ctx/parallel (and saves first). Unload all = <code>lms unload --all</code>.</p>
-        <div class="status" id="status-control">Ready.</div>
-      </div>
-
-      <div class="panel" id="panel-settings" role="tabpanel">
-        <div class="section-title">Memory &amp; load</div>
+        <div class="section-title">Extras (GUI)</div>
 
         <div class="toggle-row">
           <div class="label-row" style="margin:0">
             PLE / n-gram → CPU
-            <span class="help tip-right" tabindex="0">?<span class="tip">Intended <code>--override-tensor per_layer_token_embd=CPU</code>. LMS has no first-class flag — stored in buddy sidecar; apply via wrapper if needed.</span></span>
+            <button type="button" class="help" data-tip="Intended --override-tensor per_layer_token_embd=CPU. LMS has no first-class flag — stored in sidecar; apply via wrapper if needed.">?</button>
           </div>
           <div class="toggle on" id="tog-ple" data-key="pleCpu" role="switch" aria-checked="true"></div>
         </div>
@@ -107,7 +111,7 @@
         <label class="field" style="margin-top:8px">
           <div class="label-row">
             Lazy mode
-            <span class="help tip-right" tabindex="0">?<span class="tip">off = resident RAM. on = disk on demand. Often needs llama-server wrapper — saved in sidecar.</span></span>
+            <button type="button" class="help" data-tip="off = resident RAM. on = disk on demand. Often needs llama-server wrapper — saved in sidecar.">?</button>
           </div>
           <select id="lazy">
             <option selected>off</option>
@@ -119,7 +123,7 @@
         <label class="field">
           <div class="label-row">
             Load mode
-            <span class="help tip-right" tabindex="0">?<span class="tip">dio = DirectIO. mmap for lazy-on. mlock pins RAM. Wrapper territory — documented in sidecar.</span></span>
+            <button type="button" class="help" data-tip="dio = DirectIO. mmap for lazy-on. mlock pins RAM. Wrapper territory — documented in sidecar.">?</button>
           </div>
           <select id="loadmode">
             <option selected>dio</option>
@@ -129,27 +133,26 @@
           </select>
         </label>
 
-        <div class="section-title">MoE &amp; layers</div>
         <label class="field">
           <div class="label-row">
             n-cpu-moe
-            <span class="help tip-right" tabindex="0">?<span class="tip">Spill N expert layers to CPU. Useful for Scout; usually 0 for Flash-Next.</span></span>
+            <button type="button" class="help" data-tip="Spill N expert layers to CPU. Useful for Scout; usually 0 for Flash-Next.">?</button>
           </div>
           <input type="number" id="ncpu" value="0" min="0" max="128" />
         </label>
+
         <label class="field">
           <div class="label-row">
             GPU layers
-            <span class="help tip-right" tabindex="0">?<span class="tip">all or a layer count. Prefer Control → GPU offload for <code>lms load --gpu</code>.</span></span>
+            <button type="button" class="help" data-tip="all or a layer count. Prefer GPU offload above for lms load --gpu.">?</button>
           </div>
           <input type="text" id="ngl" value="all" />
         </label>
 
-        <div class="section-title">Cache &amp; serve</div>
         <label class="field">
           <div class="label-row">
             KV quant
-            <span class="help tip-right" tabindex="0">?<span class="tip">Best-effort / wrapper. q8 is a common Flash-Next choice; q4 saves VRAM.</span></span>
+            <button type="button" class="help" data-tip="Best-effort / wrapper. q8 is a common Flash-Next choice; q4 saves VRAM.">?</button>
           </div>
           <select id="kvquant">
             <option selected>q8_0</option>
@@ -161,26 +164,36 @@
         <div class="toggle-row">
           <div class="label-row" style="margin:0">
             mmproj (vision)
-            <span class="help tip-right" tabindex="0">?<span class="tip">Vision projector — typically wrapper/mmproj path, not <code>lms load</code>.</span></span>
+            <button type="button" class="help" data-tip="Vision projector — typically wrapper/mmproj path, not lms load.">?</button>
           </div>
           <div class="toggle on" id="tog-mmproj" data-key="mmproj" role="switch" aria-checked="true"></div>
         </div>
         <div class="toggle-row">
           <div class="label-row" style="margin:0">
             Thinking
-            <span class="help tip-right" tabindex="0">?<span class="tip">Off is faster for tool agents. Stored in sidecar; apply in client/prediction settings when LMS supports it.</span></span>
+            <button type="button" class="help" data-tip="Off is faster for tool agents. Stored in sidecar; apply in client when LMS supports it.">?</button>
           </div>
           <div class="toggle" id="tog-think" data-key="thinking" role="switch" aria-checked="false"></div>
         </div>
 
         <div class="row-btns" style="margin-top:10px">
-          <button class="btn primary" id="btn-save-settings">Save settings</button>
+          <button class="btn primary" id="btn-save">Save settings</button>
+          <button class="btn danger" id="btn-unload">Unload all</button>
+          <button class="btn ghost" id="btn-load">Load now</button>
         </div>
-        <div class="limits">
-          <strong>What Save writes:</strong> <code>gpu</code>, <code>context</code>, <code>parallel</code> via LMS concrete defaults + Load now CLI.
-          PLE / lazy / load-mode / KV / mmproj / thinking → <code>~/.lms-buddy/&lt;model&gt;.json</code> sidecar (wrapper may be required).
+
+        <p class="hint">Save → LMS defaults + sidecar. Load now runs <code>lms load</code> with gpu/ctx/parallel. Extra keys → Advanced tab.</p>
+        <div class="status" id="status-control">Ready.</div>
+      </div>
+
+      <div class="panel" id="panel-advanced" role="tabpanel">
+        <p class="hint" style="margin-top:0">Free-form JSON for anything the Control GUI doesn’t cover (extra CLI notes, wrapper flags, comments). Saved with the model sidecar. Must be valid JSON to apply.</p>
+        <textarea id="advanced-raw" class="raw-edit" spellcheck="false" rows="16"></textarea>
+        <div class="row-btns">
+          <button class="btn primary" id="btn-save-advanced">Save advanced</button>
+          <button class="btn ghost" id="btn-reset-advanced">Reset from Control</button>
         </div>
-        <div class="status" id="status-settings">Ready.</div>
+        <div class="status" id="status-advanced">Ready.</div>
       </div>
 
       <div class="panel" id="panel-connection" role="tabpanel">
@@ -195,7 +208,7 @@
         <label class="field">
           <div class="label-row">
             LMS API key
-            <span class="help tip-right" tabindex="0">?<span class="tip">Optional Bearer token if your LMS server requires auth.</span></span>
+            <button type="button" class="help" data-tip="Optional Bearer token if your LMS server requires auth.">?</button>
           </div>
           <input type="password" id="conn-apikey" placeholder="(unchanged if blank)" autocomplete="new-password" />
         </label>
@@ -210,7 +223,7 @@
         <label class="field">
           <div class="label-row">
             SSH password
-            <span class="help tip-right" tabindex="0">?<span class="tip">Stored only in local <code>data/config.json</code> (gitignored). Prefer a key path when possible.</span></span>
+            <button type="button" class="help" data-tip="Stored only in local app data. Prefer a key path when possible.">?</button>
           </div>
           <input type="password" id="conn-pass" placeholder="(unchanged if blank)" autocomplete="new-password" />
         </label>
@@ -222,11 +235,12 @@
           <button class="btn primary" id="btn-save-conn">Save connection</button>
           <button class="btn ghost" id="btn-test-conn">Test</button>
         </div>
-        <p class="hint">Secrets stay on this machine in <code>data/config.json</code> — never commit that file.</p>
+        <p class="hint">Secrets stay on this machine — never commit them.</p>
         <div class="status" id="status-conn">Ready.</div>
       </div>
     </div>
 
+    <div class="tip-dock" id="tip-dock" hidden></div>
     <div class="foot" id="foot">LMS Buddy · Monitor</div>
   </div>
   <script src="/app.js" type="module"></script>

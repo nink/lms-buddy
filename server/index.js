@@ -61,10 +61,12 @@ export function createApp() {
       patch.sshPassword = body.sshPassword;
     }
 
-    if (body.control) patch.control = { ...current.control, ...body.control };
-    if (body.settings) patch.settings = { ...current.settings, ...body.settings };
+  if (body.control) patch.control = { ...current.control, ...body.control };
+  if (body.settings) patch.settings = { ...current.settings, ...body.settings };
+  if (body.advanced !== undefined) patch.advanced = body.advanced;
+  if (typeof body.advancedRaw === "string") patch.advancedRaw = body.advancedRaw;
 
-    const saved = updateConfig(patch);
+  const saved = updateConfig(patch);
     res.json({ ok: true, config: publicConfig(saved) });
   });
 

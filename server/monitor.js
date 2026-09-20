@@ -13,11 +13,12 @@ function parseNvidiaSmi(csv) {
     // index, name, temp.C, util.gpu, memory.used MiB, memory.total MiB, fan.speed
     const parts = line.split(",").map((p) => p.trim());
     if (parts.length < 6) continue;
-    const [index, name, temp, util, memUsed, memTotal, fan] = parts;
+    const [index, name, temp, util, memUsed, memTotal, fan, power] = parts;
     const tempN = Number(temp);
     const utilN = Number(util);
     const used = Number(memUsed);
     const total = Number(memTotal);
+    const powerN = Number(power);
     gpus.push({
       index: Number(index),
       name: shortGpuName(name),
@@ -27,6 +28,7 @@ function parseNvidiaSmi(csv) {
       vramUsedMiB: Number.isFinite(used) ? used : null,
       vramTotalMiB: Number.isFinite(total) ? total : null,
       fanPct: fan && fan !== "[N/A]" && fan !== "N/A" ? Number(fan) : null,
+      powerW: Number.isFinite(powerN) ? powerN : null,
     });
   }
   return gpus;
@@ -45,15 +47,64 @@ function shortGpuName(name) {
 }
 
 function parseMemInfo(stdout) {
-  // MemTotal / MemAvailable in kB from /proc/meminfo
   const total = Number((stdout.match(/MemTotal:\s+(\d+)/) || [])[1]);
   const avail = Number((stdout.match(/MemAvailable:\s+(\d+)/) || [])[1]);
-  if (!total) return { ramUsedGiB: null, ramTotalGiB: null };
-  const usedKiB = total - (avail || 0);
-  return {
-    ramUsedGiB: +(usedKiB / 1024 / 1024).toFixed(1),
-    ramTotalGiB: +(total / 1024 / 1024).toFixed(1),
+  const swapTotal = Number((stdout.match(/SwapTotal:\s+(\d+)/) || [])[1]);
+  const swapFree = Number((stdout.match(/SwapFree:\s+(\d+)/) || [])[1]);
+  const out = {
+    ramUsedGiB: null,
+    ramTotalGiB: null,
+    ramPct: null,
   };
+  if (total) {
+    const usedKiB = total - (avail || 0);
+    out.ramUsedGiB = +(usedKiB / 1024 / 1024).toFixed(1);
+    out.ramTotalGiB = +(total / 1024 / 1024).toFixed(1);
+    out.ramPct = Math.round((usedKiB / total) * 100);
+  }
+  const swap = {
+    swapUsedGiB: null,
+    swapTotalGiB: null,
+  };
+  if (swapTotal) {
+    const used = swapTotal - (swapFree || 0);
+    swap.swapUsedGiB = +(used / 1024 / 1024).toFixed(1);
+    swap.swapTotalGiB = +(swapTotal / 1024 / 1024).toFixed(1);
+  }
+  return { ram: out, swap };
+}
+
+function parseLoadAvg(stdout) {
+  const m = stdout.trim().match(/^([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+  if (!m) return null;
+  return [Number(m[1]), Number(m[2]), Number(m[3])].map((n) => +n.toFixed(2));
+}
+
+function parseDisk(stdout) {
+  // df -BG /  -> Filesystem Size Used Avail Use% Mounted
+  const lines = stdout.trim().split(/\r?\n/).filter(Boolean);
+  const data = lines.find((l) => l.startsWith("/") || /\s\/$/.test(l)) || lines[1];
+  if (!data) return {};
+  const parts = data.trim().split(/\s+/);
+  // size used avail pct mount — units may be "120G"
+  const num = (s) => Number(String(s).replace(/G/i, ""));
+  if (parts.length >= 5) {
+    const total = num(parts[1]);
+    const used = num(parts[2]);
+    const pct = Number(String(parts[4]).replace("%", ""));
+    return {
+      totalGiB: Number.isFinite(total) ? total : null,
+      usedGiB: Number.isFinite(used) ? used : null,
+      pct: Number.isFinite(pct) ? pct : null,
+    };
+  }
+  return {};
+}
+
+function parseUptime(stdout) {
+  // uptime -p => "up 2 weeks, 3 days, ..."
+  const t = stdout.trim();
+  return t.replace(/^up\s+/i, "") || null;
 }
 
 function parseCpuIdle(stdout) {
@@ -131,20 +182,18 @@ function parseLmsPs(stdout) {
 }
 
 export async function collectMetrics(cfg = loadConfig()) {
-  const errors = [];
-  let gpus = [];
-  let ram = { ramUsedGiB: null, ramTotalGiB: null };
-  let cpuPct = null;
-  let lmsPs = { loaded: [], raw: "" };
-  let api = { ok: false, models: [] };
-
   const nvidiaCmd =
-    "nvidia-smi --query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total,fan.speed --format=csv,noheader,nounits 2>/dev/null";
+    "nvidia-smi --query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total,fan.speed,power.draw --format=csv,noheader,nounits 2>/dev/null";
   const memCmd = "cat /proc/meminfo";
   const cpuCmd =
     "head -1 /proc/stat; sleep 0.35; head -1 /proc/stat";
   const psCmd =
     "lms ps --json 2>/dev/null || lms ps -j 2>/dev/null || lms ps 2>/dev/null";
+  const loadCmd = "cat /proc/loadavg";
+  const threadsCmd = "nproc 2>/dev/null; grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2";
+  const diskCmd = "df -BG / 2>/dev/null | tail -1";
+  const upCmd = "uptime -p 2>/dev/null || uptime";
+  const hostCmd = "hostname";
 
   const combined = [
     `echo '---NVIDIA---'`,
@@ -155,7 +204,31 @@ export async function collectMetrics(cfg = loadConfig()) {
     cpuCmd,
     `echo '---LMSPS---'`,
     psCmd,
+    `echo '---LOAD---'`,
+    loadCmd,
+    `echo '---THREADS---'`,
+    threadsCmd,
+    `echo '---DISK---'`,
+    diskCmd,
+    `echo '---UP---'`,
+    upCmd,
+    `echo '---HOST---'`,
+    hostCmd,
   ].join("; ");
+
+  let gpus = [];
+  let ram = { ramUsedGiB: null, ramTotalGiB: null, ramPct: null };
+  let swap = { swapUsedGiB: null, swapTotalGiB: null };
+  let cpuPct = null;
+  let lmsPs = { loaded: [], raw: "" };
+  let api = { ok: false, models: [] };
+  let loadavg = null;
+  let cpuThreads = null;
+  let cpuModel = null;
+  let disk = {};
+  let uptime = null;
+  let hostname = null;
+  const errors = [];
 
   try {
     const r = await sshExec(combined, 20000, cfg);
@@ -168,7 +241,9 @@ export async function collectMetrics(cfg = loadConfig()) {
       } catch (e) {
         errors.push(`nvidia-smi parse: ${e.message}`);
       }
-      ram = parseMemInfo(sections.MEM || "");
+      const mem = parseMemInfo(sections.MEM || "");
+      ram = mem.ram;
+      swap = mem.swap;
       const cpuLines = (sections.CPU || "").trim().split(/\r?\n/).filter(Boolean);
       if (cpuLines.length >= 2) {
         cpuPct = cpuPctFromSamples(
@@ -177,6 +252,14 @@ export async function collectMetrics(cfg = loadConfig()) {
         );
       }
       lmsPs = parseLmsPs(sections.LMSPS || "");
+      loadavg = parseLoadAvg(sections.LOAD || "");
+      const th = (sections.THREADS || "").trim().split(/\r?\n/);
+      cpuThreads = Number(th[0]) || null;
+      cpuModel = (th[1] || "").trim() || null;
+      if (cpuModel && cpuModel.length > 42) cpuModel = cpuModel.slice(0, 40) + "…";
+      disk = parseDisk(sections.DISK || "");
+      uptime = parseUptime(sections.UP || "");
+      hostname = (sections.HOST || "").trim() || null;
     }
   } catch (e) {
     errors.push(`ssh: ${e.message}`);
@@ -205,6 +288,8 @@ export async function collectMetrics(cfg = loadConfig()) {
     ts: Date.now(),
     host: cfg.host,
     port: cfg.port,
+    hostname,
+    uptime,
     model: primary
       ? { id: primary.id, key: primary.modelKey, status: primary.status }
       : null,
@@ -214,6 +299,11 @@ export async function collectMetrics(cfg = loadConfig()) {
     context: primary?.contextLength || null,
     parallel: primary?.parallel ?? null,
     ram,
+    swap,
+    loadavg,
+    cpuThreads,
+    cpuModel,
+    disk,
     cpuPct,
     gpus,
     loaded: lmsPs.loaded,

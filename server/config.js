@@ -51,6 +51,14 @@ const DEFAULTS = {
     mmproj: true,
     thinking: false,
   },
+  advanced: {
+    extras: {
+      overrideTensor: "per_layer_token_embd=CPU",
+      notes:
+        "Add any unsupported flags here. Saved to ~/.lms-buddy/<model>.json",
+    },
+  },
+  advancedRaw: "",
 };
 
 function ensureDataDir() {
@@ -73,6 +81,14 @@ export function loadConfig() {
       ...raw,
       control: { ...DEFAULTS.control, ...(raw.control || {}) },
       settings: { ...DEFAULTS.settings, ...(raw.settings || {}) },
+      advanced: {
+        ...DEFAULTS.advanced,
+        ...(raw.advanced || {}),
+        extras: {
+          ...(DEFAULTS.advanced?.extras || {}),
+          ...(raw.advanced?.extras || {}),
+        },
+      },
     };
   } catch {
     return structuredClone(DEFAULTS);
@@ -86,6 +102,14 @@ export function saveConfig(cfg) {
     ...cfg,
     control: { ...DEFAULTS.control, ...(cfg.control || {}) },
     settings: { ...DEFAULTS.settings, ...(cfg.settings || {}) },
+    advanced: {
+      ...DEFAULTS.advanced,
+      ...(cfg.advanced || {}),
+      extras: {
+        ...(DEFAULTS.advanced?.extras || {}),
+        ...(cfg.advanced?.extras || {}),
+      },
+    },
   };
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), "utf8");
   return merged;
@@ -114,6 +138,8 @@ export function publicConfig(cfg = loadConfig()) {
     pollMs: cfg.pollMs,
     control: cfg.control,
     settings: cfg.settings,
+    advanced: cfg.advanced || DEFAULTS.advanced,
+    advancedRaw: cfg.advancedRaw || "",
   };
 }
 
