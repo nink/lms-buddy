@@ -30,13 +30,16 @@ Optional: `npm start` runs the Electron window without packaging.
 
 Compact corner window — live GPU/CPU/RAM on every tab.
 
-| Monitor | Control |
-|:---:|:---:|
-| ![Monitor](docs/screenshots/monitor.png) | ![Control](docs/screenshots/control.png) |
-
-| Advanced | Connection |
-|:---:|:---:|
-| ![Advanced](docs/screenshots/advanced.png) | ![Connection](docs/screenshots/connection.png) |
+<p align="center">
+  <img src="docs/screenshots/monitor-v2.png" alt="Monitor" width="280" />
+  &nbsp;
+  <img src="docs/screenshots/control-v2.png" alt="Control" width="280" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/advanced-v2.png" alt="Advanced" width="280" />
+  &nbsp;
+  <img src="docs/screenshots/connection-v2.png" alt="Connection" width="280" />
+</p>
 
 ## Tabs
 
