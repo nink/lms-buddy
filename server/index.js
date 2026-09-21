@@ -15,6 +15,7 @@ import {
   listRemoteModels,
   setGpuPowerLimit,
 } from "./actions.js";
+import { listModelsDetailed } from "./lms-http.js";
 
 function pickConn(body) {
   const o = {};
@@ -94,15 +95,39 @@ export function createApp() {
       const m = await collectMetrics();
       res.json(m);
     } catch (e) {
-      res
-        .status(500)
-        .json({ ok: false, error: e.message, gpus: [], errors: [e.message] });
+      const msg = e?.message || String(e);
+      const soft = /timed out|ECONNRESET|handshake|Disconnected|No response/i.test(msg);
+      res.status(soft ? 200 : 500).json({
+        ok: false,
+        error: msg,
+        gpus: [],
+        errors: soft ? [] : [msg],
+        softErrors: soft ? [msg] : [],
+        transient: soft,
+        activity: soft ? "idle · waiting on host…" : `error · ${msg}`,
+      });
     }
   });
 
   app.get("/api/models", async (_req, res) => {
     try {
-      const r = await listRemoteModels();
+      // Prefer LMS HTTP catalog (max ctx + capabilities); SSH ls as fallback.
+      let r = await listModelsDetailed();
+      if (!r.ok || !r.models?.length) {
+        const ssh = await listRemoteModels();
+        r = {
+          ok: ssh.ok,
+          models: (ssh.models || []).map((m) => ({
+            id: m.id,
+            label: m.label,
+            maxContextLength: null,
+            capabilities: [],
+            type: null,
+          })),
+          source: "ssh",
+          error: r.error,
+        };
+      }
       res.json(r);
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message, models: [] });

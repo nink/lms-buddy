@@ -1,6 +1,6 @@
 {
   "name": "lms-buddy",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Compact desktop utility for monitoring and configuring LM Studio on a remote host",
   "private": true,
   "type": "module",

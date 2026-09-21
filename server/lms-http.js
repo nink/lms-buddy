@@ -32,6 +32,7 @@ async function fetchJson(url, cfg, timeoutMs = 5000) {
   }
 }
 
+/** Lightweight list for health/metrics (OpenAI-compatible). */
 export async function listModels(cfg = loadConfig()) {
   const r = await fetchJson(`${baseUrl(cfg)}/v1/models`, cfg);
   if (!r.ok) {
@@ -43,6 +44,38 @@ export async function listModels(cfg = loadConfig()) {
     owned_by: m.owned_by,
   }));
   return { ok: true, status: r.status, models };
+}
+
+/**
+ * Rich catalog from LMS /api/v0/models — includes max_context_length,
+ * type (llm/vlm), capabilities (e.g. tool_use), quant, arch.
+ */
+export async function listModelsDetailed(cfg = loadConfig()) {
+  const r = await fetchJson(`${baseUrl(cfg)}/api/v0/models`, cfg, 10000);
+  if (!r.ok || !r.json?.data) {
+    // Fall back to thin /v1/models
+    const thin = await listModels(cfg);
+    return {
+      ...thin,
+      source: thin.ok ? "v1" : "none",
+      error: thin.ok ? undefined : r.text?.slice(0, 200) || thin.error,
+    };
+  }
+  const models = (r.json.data || [])
+    .filter((m) => m && m.id && (m.type === "llm" || m.type === "vlm" || !m.type))
+    .map((m) => ({
+      id: m.id,
+      type: m.type || "llm",
+      publisher: m.publisher || null,
+      arch: m.arch || null,
+      quantization: m.quantization || null,
+      state: m.state || null,
+      maxContextLength: Number(m.max_context_length) || null,
+      loadedContextLength: Number(m.loaded_context_length) || null,
+      capabilities: Array.isArray(m.capabilities) ? m.capabilities : [],
+      compatibilityType: m.compatibility_type || null,
+    }));
+  return { ok: true, status: r.status, models, source: "v0" };
 }
 
 export async function healthCheck(cfg = loadConfig()) {

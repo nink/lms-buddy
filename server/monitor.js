@@ -1,4 +1,4 @@
-import { sshExec, bashQuote } from "./ssh.js";
+import { sshExec } from "./ssh.js";
 import { listModels, healthCheck } from "./lms-http.js";
 import { loadConfig } from "./config.js";
 
@@ -99,6 +99,152 @@ function parseLoadAvg(stdout) {
   const m = stdout.trim().match(/^([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
   if (!m) return null;
   return [Number(m[1]), Number(m[2]), Number(m[3])].map((n) => +n.toFixed(2));
+}
+
+function parseFanSection(text) {
+  const out = {
+    controller: {
+      name: null,
+      active: false,
+      detail: null,
+      mapsToGpu: null,
+      lastDutyPct: null,
+      lastGpuTempC: null,
+    },
+    chassis: [],
+  };
+  if (!text) return out;
+
+  for (const line of text.split(/\r?\n/)) {
+    if (line.startsWith("CTRL:")) {
+      const st = line.slice(5).trim();
+      if (st === "active") {
+        out.controller.active = true;
+        out.controller.name = "gpu-fan2-control";
+        out.controller.mapsToGpu = 0; // CMP / GPU0
+        out.controller.detail = "IPMI FAN2 from CMP temp";
+      }
+    } else if (line.startsWith("PROC:") && /gpu-fan2-control/.test(line)) {
+      out.controller.active = true;
+      out.controller.name = out.controller.name || "gpu-fan2-control";
+      out.controller.mapsToGpu = 0;
+      out.controller.detail = out.controller.detail || "IPMI FAN2 from CMP temp";
+    } else if (line.startsWith("LOG:")) {
+      const log = line.slice(4);
+      const m = log.match(/GPU0=(\d+)C\s+FAN2\s+duty=(\d+)%/i);
+      if (m) {
+        out.controller.lastGpuTempC = Number(m[1]);
+        out.controller.lastDutyPct = Number(m[2]);
+        out.controller.active = true;
+        out.controller.name = out.controller.name || "gpu-fan2-control";
+        out.controller.mapsToGpu = 0;
+      }
+      // Controller log embeds RPM dict: RPM={'FAN1': '5400', 'FAN2': '1900'}
+      const rpmBlock = log.match(/RPM=\{([^}]*)\}/i);
+      if (rpmBlock) {
+        for (const part of rpmBlock[1].split(",")) {
+          const rm = part.match(/'?(FAN\d+)'?\s*:\s*'?(\d+)'?/i);
+          if (!rm) continue;
+          const id = rm[1].toUpperCase();
+          const rpm = Number(rm[2]);
+          if (!Number.isFinite(rpm) || rpm <= 0) continue;
+          const existing = out.chassis.find((c) => c.id === id);
+          if (existing) {
+            existing.rpm = rpm;
+          } else {
+            out.chassis.push({
+              id,
+              rpm,
+              mode: id === "FAN2" && out.controller.active ? "manual" : "bmc-auto",
+              controlledBy:
+                id === "FAN2" && out.controller.active ? out.controller.name : null,
+              dutyPct: id === "FAN2" ? out.controller.lastDutyPct : null,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // ipmitool sdr type Fan:
+  //   FAN1             | 60h | ok  | 29.0 | 5400 RPM
+  // ipmitool sensor:
+  //   FAN1             | 5400.000   | RPM        | ok    | ...
+  const sdrStart = text.indexOf("SDR---");
+  const sdr = sdrStart >= 0 ? text.slice(sdrStart + 6) : text;
+  const seen = new Set();
+  for (const line of sdr.split(/\r?\n/)) {
+    const m =
+      line.match(/^(FAN\d+(?:_\d+)?)\s*\|\s*[0-9a-fA-Fh]+\s*\|\s*\w+\s*\|\s*[\d.]+\s*\|\s*([\d.]+)\s*RPM/i) ||
+      line.match(/^(FAN\d+(?:_\d+)?)\s*\|\s*([\d.]+)\s*\|\s*RPM/i) ||
+      line.match(/^(FAN\s*\d+)\s*\|\s*([\d.]+)\s*RPM/i);
+    if (!m) continue;
+    const id = m[1].replace(/\s+/g, "").toUpperCase();
+    // Skip unused / secondary empty sensors
+    if (/_/.test(id)) continue;
+    const rpm = Math.round(Number(m[2]));
+    if (!Number.isFinite(rpm) || rpm <= 0) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    let mode = "bmc-auto";
+    let controlledBy = null;
+    if (id === "FAN2" && out.controller.active && out.controller.name === "gpu-fan2-control") {
+      mode = "manual";
+      controlledBy = "gpu-fan2-control";
+    }
+    out.chassis.push({
+      id,
+      rpm,
+      mode,
+      controlledBy,
+      dutyPct: id === "FAN2" ? out.controller.lastDutyPct : null,
+    });
+  }
+  return out;
+}
+
+/** Attach per-GPU fan control source (nvidia-smi vs chassis IPMI hack). */
+function enrichGpuFans(gpus, fans) {
+  const ctrl = fans?.controller || {};
+  return (gpus || []).map((g) => {
+    if (g.fanPct != null && Number.isFinite(g.fanPct)) {
+      return {
+        ...g,
+        fanControl: {
+          source: "nvidia-smi",
+          label: "nvidia",
+          pct: g.fanPct,
+          rpm: null,
+          dutyPct: null,
+        },
+      };
+    }
+    // CMP / cards with no nvidia fan — map chassis FAN2 if controller targets this GPU
+    if (ctrl.active && ctrl.mapsToGpu === g.index) {
+      const fan2 = (fans.chassis || []).find((f) => f.id === "FAN2");
+      return {
+        ...g,
+        fanControl: {
+          source: "ipmi",
+          label: "IPMI FAN2",
+          pct: ctrl.lastDutyPct,
+          rpm: fan2?.rpm ?? null,
+          dutyPct: ctrl.lastDutyPct,
+          controller: ctrl.name,
+        },
+      };
+    }
+    return {
+      ...g,
+      fanControl: {
+        source: "none",
+        label: "no fan data",
+        pct: null,
+        rpm: null,
+        dutyPct: null,
+      },
+    };
+  });
 }
 
 function parseDisk(stdout) {
@@ -215,6 +361,13 @@ export async function collectMetrics(cfg = loadConfig()) {
   const diskCmd = "df -BG / 2>/dev/null | tail -1";
   const upCmd = "uptime -p 2>/dev/null || uptime";
   const hostCmd = "hostname";
+  // Chassis fans: detect controller + last duty/RPM from its journal (no ipmitool —
+  // /dev/ipmi often unavailable over Buddy SSH and sudo slows/times out polls).
+  const fansCmd = [
+    "echo 'CTRL:'$(systemctl is-active gpu-fan2-control.service 2>/dev/null || echo inactive)",
+    "echo 'PROC:'$(pgrep -af 'gpu-fan2-control\\.py' 2>/dev/null | head -1 | tr '|' '/' || true)",
+    "echo 'LOG:'$(journalctl -u gpu-fan2-control.service -n 30 --no-pager -o cat 2>/dev/null | grep -E 'FAN2 duty' | tail -1 | tr '\\n' ' ' || true)",
+  ].join("; ");
 
   const combined = [
     `echo '---NVIDIA---'`,
@@ -235,6 +388,8 @@ export async function collectMetrics(cfg = loadConfig()) {
     upCmd,
     `echo '---HOST---'`,
     hostCmd,
+    `echo '---FANS---'`,
+    fansCmd,
   ].join("; ");
 
   let gpus = [];
@@ -249,10 +404,15 @@ export async function collectMetrics(cfg = loadConfig()) {
   let disk = {};
   let uptime = null;
   let hostname = null;
+  let fans = {
+    controller: { name: null, active: false, detail: null, mapsToGpu: null, lastDutyPct: null, lastGpuTempC: null },
+    chassis: [],
+  };
   const errors = [];
+  const softErrors = [];
 
   try {
-    const r = await sshExec(combined, 20000, cfg);
+    const r = await sshExec(combined, 35000, cfg);
     if (r.code !== 0 && !r.stdout.includes("---NVIDIA---")) {
       errors.push(`ssh: ${r.stderr || `exit ${r.code}`}`);
     } else {
@@ -261,6 +421,12 @@ export async function collectMetrics(cfg = loadConfig()) {
         gpus = parseNvidiaSmi(sections.NVIDIA || "");
       } catch (e) {
         errors.push(`nvidia-smi parse: ${e.message}`);
+      }
+      try {
+        fans = parseFanSection(sections.FANS || "");
+        gpus = enrichGpuFans(gpus, fans);
+      } catch (e) {
+        errors.push(`fans parse: ${e.message}`);
       }
       const mem = parseMemInfo(sections.MEM || "");
       ram = mem.ram;
@@ -283,7 +449,13 @@ export async function collectMetrics(cfg = loadConfig()) {
       hostname = (sections.HOST || "").trim() || null;
     }
   } catch (e) {
-    errors.push(`ssh: ${e.message}`);
+    const msg = e?.message || String(e);
+    // Transient SSH blips are common under load — don't treat as hard errors.
+    if (/timed out|ECONNRESET|handshake|Disconnected|No response/i.test(msg)) {
+      softErrors.push(`ssh: ${msg}`);
+    } else {
+      errors.push(`ssh: ${msg}`);
+    }
   }
 
   try {
@@ -327,11 +499,14 @@ export async function collectMetrics(cfg = loadConfig()) {
     disk,
     cpuPct,
     gpus,
+    fans,
     loaded: lmsPs.loaded,
     apiModels: api.models || [],
     apiOk: Boolean(api.ok),
     errors,
-    activity: buildActivity({ state, primary, gpus, errors }),
+    softErrors,
+    transient: softErrors.length > 0 && gpus.length === 0,
+    activity: buildActivity({ state, primary, gpus, errors, softErrors }),
   };
 }
 
@@ -350,14 +525,18 @@ function splitSections(stdout) {
   return out;
 }
 
-function buildActivity({ state, primary, gpus, errors }) {
+function buildActivity({ state, primary, gpus, errors, softErrors = [] }) {
+  // Hard errors only when we have nothing useful to show
   if (errors.length && !gpus.length) return `error · ${errors[0]}`;
+  // Soft SSH timeouts: keep normal status (UI may append a quiet stale note)
   const hot = gpus.reduce(
     (a, g) => (g.tempC != null && (a == null || g.tempC > a.tempC) ? g : a),
     null,
   );
   if (state === "idle" || !primary) {
-    return `idle · VRAM free · last ${primary?.id || "—"}`;
+    return softErrors.length && !gpus.length
+      ? `idle · waiting on host…`
+      : `idle · VRAM free · last ${primary?.id || "—"}`;
   }
   const hotBit =
     hot && hot.tempC != null
@@ -384,5 +563,3 @@ export async function testConnection(cfg = loadConfig()) {
     ...results,
   };
 }
-
-export { bashQuote };

@@ -12,6 +12,8 @@ let config = null;
 let pollTimer = null;
 let busy = false;
 let tipHideTimer = null;
+/** @type {Map<string, object>} */
+let modelCatalog = new Map();
 
 async function api(path, opts = {}) {
   const res = await fetch(path, {
@@ -204,7 +206,9 @@ function applyAdvancedToControl(doc) {
     ensureModelOption(c.modelId);
     document.getElementById("model").value = c.modelId;
   }
-  if (c.context) document.getElementById("ctx").value = String(c.context);
+  applyModelCapabilities(document.getElementById("model").value, {
+    preferCtx: c.context,
+  });
   if (c.gpu) document.getElementById("gpu").value = c.gpu;
   if (c.parallel != null) document.getElementById("parallel").value = c.parallel;
   if (typeof s.pleCpu === "boolean") setToggle("tog-ple", s.pleCpu);
@@ -251,7 +255,9 @@ function applyConfigToForm(cfg) {
   const c = cfg.control || {};
   ensureModelOption(c.modelId || "ud");
   document.getElementById("model").value = c.modelId || "ud";
-  document.getElementById("ctx").value = String(c.context || 32768);
+  applyModelCapabilities(document.getElementById("model").value, {
+    preferCtx: c.context || 32768,
+  });
   document.getElementById("gpu").value = c.gpu || "max";
   document.getElementById("parallel").value = c.parallel || 1;
 
@@ -285,7 +291,132 @@ function ensureModelOption(id) {
     opt.value = id;
     opt.textContent = id;
     sel.appendChild(opt);
+    if (!modelCatalog.has(id)) {
+      modelCatalog.set(id, { id, maxContextLength: null, capabilities: [], type: null });
+    }
   }
+}
+
+/** Pretty label for context token counts. */
+function formatCtxLabel(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v <= 0) return String(n);
+  if (v >= 1048576) {
+    const m = v / 1048576;
+    return `${v} (${Number.isInteger(m) ? m : m.toFixed(1)}M)`;
+  }
+  if (v >= 1024) {
+    const k = v / 1024;
+    return `${v} (${Number.isInteger(k) ? k : k.toFixed(1)}k)`;
+  }
+  return String(v);
+}
+
+/**
+ * Build ctx ladder up to model max. Always includes the model's exact max
+ * (e.g. 128000, 202752, 1048576) even when not a power of two.
+ */
+function buildCtxOptions(maxCtx) {
+  const ladder = [
+    2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304,
+    8388608, 10485760,
+  ];
+  const max = Number(maxCtx);
+  if (!Number.isFinite(max) || max <= 0) {
+    return ladder.filter((n) => n <= 131072);
+  }
+  const opts = ladder.filter((n) => n <= max);
+  if (!opts.includes(max)) opts.push(max);
+  opts.sort((a, b) => a - b);
+  return opts.length ? opts : [max];
+}
+
+function pickDefaultCtx(options, maxCtx, preferred) {
+  const max = Number(maxCtx) || options[options.length - 1];
+  const pref = Number(preferred);
+  if (Number.isFinite(pref) && options.includes(pref)) return pref;
+  // Prefer agent-friendly sizes when the model allows them.
+  for (const want of [131072, 65536, 32768, 16384]) {
+    if (options.includes(want)) return want;
+  }
+  // Otherwise largest ≤ 65536, else max.
+  const under = options.filter((n) => n <= 65536);
+  return under.length ? under[under.length - 1] : max;
+}
+
+function applyModelCapabilities(modelId, { preferCtx } = {}) {
+  const meta = modelCatalog.get(modelId) || { id: modelId };
+  const maxCtx = meta.maxContextLength || null;
+  const caps = Array.isArray(meta.capabilities) ? meta.capabilities : [];
+  const sel = document.getElementById("ctx");
+  const prev = Number(preferCtx ?? sel.value);
+
+  const options = buildCtxOptions(maxCtx);
+  sel.innerHTML = "";
+  for (const n of options) {
+    const opt = document.createElement("option");
+    opt.value = String(n);
+    opt.textContent = formatCtxLabel(n);
+    sel.appendChild(opt);
+  }
+  const chosen = pickDefaultCtx(options, maxCtx, prev);
+  sel.value = String(chosen);
+
+  // Caps chips
+  const box = document.getElementById("model-caps");
+  if (box) {
+    if (!meta.maxContextLength && !meta.type && !caps.length) {
+      box.innerHTML = `<span class="cap-empty">No LMS metadata — using default ctx ladder.</span>`;
+    } else {
+      const chips = [];
+      if (meta.type) {
+        chips.push(
+          `<span class="cap${meta.type === "vlm" ? " accent" : ""}">${escapeHtml(meta.type)}</span>`,
+        );
+      }
+      if (maxCtx) {
+        chips.push(`<span class="cap accent">max ${escapeHtml(formatCtxLabel(maxCtx))}</span>`);
+      }
+      if (meta.quantization) {
+        chips.push(`<span class="cap">${escapeHtml(meta.quantization)}</span>`);
+      }
+      if (meta.arch) {
+        chips.push(`<span class="cap">${escapeHtml(meta.arch)}</span>`);
+      }
+      if (meta.type === "vlm") {
+        chips.push(`<span class="cap accent">vision</span>`);
+      }
+      if (caps.includes("tool_use") || caps.includes("tools")) {
+        chips.push(`<span class="cap accent">tools</span>`);
+      }
+      for (const c of caps) {
+        if (c === "tool_use" || c === "tools") continue;
+        chips.push(`<span class="cap">${escapeHtml(String(c))}</span>`);
+      }
+      if (meta.state === "loaded") {
+        chips.push(`<span class="cap warn">loaded</span>`);
+      }
+      box.innerHTML = chips.join("") || `<span class="cap-empty">—</span>`;
+    }
+  }
+
+  const help = document.getElementById("ctx-help");
+  if (help) {
+    help.dataset.tip = maxCtx
+      ? `Ladder capped at this model’s max context (${formatCtxLabel(maxCtx)}). Agents need ≥32k when the model allows it.`
+      : "Options come from the selected model’s max context when LMS reports it. Agents need ≥32k when allowed.";
+  }
+
+  // Reasoning: always available; hint if model is tiny-context (unlikely to be a reasoner).
+  const reasoning = document.getElementById("reasoning");
+  if (reasoning) {
+    reasoning.disabled = false;
+    reasoning.title = maxCtx && maxCtx < 8192
+      ? "Very small context model — reasoning may be limited."
+      : "";
+  }
+
+  syncAdvancedFromControl();
 }
 
 function fillModels(models) {
@@ -293,13 +424,20 @@ function fillModels(models) {
   const current = sel.value || config?.control?.modelId || "ud";
   sel.innerHTML = "";
   const seen = new Set();
+  modelCatalog.clear();
   for (const m of models || []) {
     const id = m.id || m;
     if (!id || seen.has(id)) continue;
     seen.add(id);
+    const meta = typeof m === "object" ? m : { id };
+    modelCatalog.set(id, meta);
     const opt = document.createElement("option");
     opt.value = id;
-    opt.textContent = m.label && m.label !== id ? `${id} — ${m.label}` : id;
+    const bits = [];
+    if (m.label && m.label !== id) bits.push(m.label);
+    if (m.maxContextLength) bits.push(`max ${formatCtxLabel(m.maxContextLength)}`);
+    if (m.type === "vlm") bits.push("vision");
+    opt.textContent = bits.length ? `${id} · ${bits.join(" · ")}` : id;
     sel.appendChild(opt);
   }
   if (!seen.has("ud")) {
@@ -307,9 +445,13 @@ function fillModels(models) {
     opt.value = "ud";
     opt.textContent = "ud";
     sel.appendChild(opt);
+    if (!modelCatalog.has("ud")) modelCatalog.set("ud", { id: "ud" });
   }
   ensureModelOption(current);
-  sel.value = seen.has(current) ? current : "ud";
+  sel.value = seen.has(current) ? current : sel.options[0]?.value || "ud";
+  applyModelCapabilities(sel.value, {
+    preferCtx: config?.control?.context,
+  });
 }
 
 function tempBand(tempC) {
@@ -348,54 +490,92 @@ function renderGpus(_gpus) {
   // Removed duplicate live-strip GPU cards — Monitor dials are the single GPU view.
 }
 
+function fanMeta(g) {
+  const fanCtrl = g.fanControl || {};
+  if (fanCtrl.source === "nvidia-smi" && fanCtrl.pct != null) {
+    return ` · fan ${fanCtrl.pct}%`;
+  }
+  if (fanCtrl.source === "ipmi") {
+    const bits = [];
+    if (fanCtrl.dutyPct != null) bits.push(`${fanCtrl.dutyPct}%`);
+    if (fanCtrl.rpm != null) bits.push(`${fanCtrl.rpm}rpm`);
+    return bits.length ? ` · FAN2 ${bits.join(" ")}` : " · FAN2";
+  }
+  return "";
+}
+
+function gaugeSnapshot(gpus) {
+  return (gpus || []).map((g) => g.index).join(",");
+}
+
+let lastGaugeKey = "";
+
 function renderGpuGauges(gpus) {
   const box = document.getElementById("gpu-gauges");
   if (!box) return;
   if (!gpus?.length) {
     box.innerHTML = "";
+    lastGaugeKey = "";
     return;
   }
-  // Arc length for path roughly semicircle r=40 → π*40 ≈ 125.6
+
   const ARC = 126;
-  box.innerHTML = gpus
-    .map((g) => {
-      const band = tempBand(g.tempC);
-      const offset = ARC - (ARC * band.pct) / 100;
-      const util = g.utilPct ?? 0;
-      const vramPct =
-        g.vramUsedMiB != null && g.vramTotalMiB
-          ? Math.round((g.vramUsedMiB / g.vramTotalMiB) * 100)
-          : 0;
-      const vram =
-        g.vramUsedMiB != null && g.vramTotalMiB != null
-          ? `${(Math.round((g.vramUsedMiB / 1024) * 10) / 10)}/${(Math.round((g.vramTotalMiB / 1024) * 10) / 10)}G`
-          : "—";
-      const pwr =
-        g.powerW != null
-          ? `${Math.round(g.powerW)}W`
-          : "—";
-      const lim =
-        g.powerLimitW != null ? ` / ${Math.round(g.powerLimitW)}W` : "";
-      const fan =
-        g.fanPct != null
-          ? ` · fan ${g.fanPct}%`
-          : g.name === "CMP"
-            ? " · fan n/a"
-            : "";
-      return `<div class="gauge ${band.cls}" style="--g-accent:${band.color}">
+  const key = gaugeSnapshot(gpus);
+  const needRebuild = key !== lastGaugeKey || !box.querySelector(".gauge");
+
+  if (needRebuild) {
+    lastGaugeKey = key;
+    box.innerHTML = gpus
+      .map((g) => {
+        return `<div class="gauge" data-gpu="${g.index}">
         <svg class="gauge-svg" viewBox="0 0 100 62" aria-hidden="true">
           <path class="track" d="M 12 54 A 38 38 0 0 1 88 54" />
           <path class="arc" d="M 12 54 A 38 38 0 0 1 88 54"
-            stroke-dasharray="${ARC}" stroke-dashoffset="${offset}" />
+            stroke-dasharray="${ARC}" stroke-dashoffset="${ARC}" />
         </svg>
-        <div class="gauge-readout">${g.tempC != null ? `${g.tempC}°` : "—"}</div>
+        <div class="gauge-readout">—</div>
         <div class="gauge-label">${g.index} ${escapeHtml(g.name)}</div>
-        <div class="gauge-meta">${util}% · ${vram}<br>${pwr}${lim}${fan}</div>
-        <div class="gbar" title="GPU util"><i style="width:${util}%"></i></div>
-        <div class="gbar2" title="VRAM"><i style="width:${vramPct}%"></i></div>
+        <div class="gauge-meta"></div>
+        <div class="gbar" title="GPU util"><i style="width:0%"></i></div>
+        <div class="gbar2" title="VRAM"><i style="width:0%"></i></div>
       </div>`;
-    })
-    .join("");
+      })
+      .join("");
+  }
+
+  // In-place updates — avoids full DOM wipe / visual refresh every poll
+  for (const g of gpus) {
+    const el = box.querySelector(`.gauge[data-gpu="${g.index}"]`);
+    if (!el) continue;
+    const band = tempBand(g.tempC);
+    const offset = ARC - (ARC * band.pct) / 100;
+    const util = g.utilPct ?? 0;
+    const vramPct =
+      g.vramUsedMiB != null && g.vramTotalMiB
+        ? Math.round((g.vramUsedMiB / g.vramTotalMiB) * 100)
+        : 0;
+    const vram =
+      g.vramUsedMiB != null && g.vramTotalMiB != null
+        ? `${(Math.round((g.vramUsedMiB / 1024) * 10) / 10)}/${(Math.round((g.vramTotalMiB / 1024) * 10) / 10)}G`
+        : "—";
+    const pwr = g.powerW != null ? `${Math.round(g.powerW)}W` : "—";
+    const lim = g.powerLimitW != null ? ` / ${Math.round(g.powerLimitW)}W` : "";
+
+    el.className = `gauge ${band.cls}`;
+    el.style.setProperty("--g-accent", band.color);
+    const arc = el.querySelector(".arc");
+    if (arc) arc.setAttribute("stroke-dashoffset", String(offset));
+    const readout = el.querySelector(".gauge-readout");
+    if (readout) readout.textContent = g.tempC != null ? `${g.tempC}°` : "—";
+    const label = el.querySelector(".gauge-label");
+    if (label) label.textContent = `${g.index} ${g.name}`;
+    const meta = el.querySelector(".gauge-meta");
+    if (meta) meta.innerHTML = `${util}% · ${vram}<br>${pwr}${lim}${fanMeta(g)}`;
+    const bar = el.querySelector(".gbar i");
+    if (bar) bar.style.width = `${util}%`;
+    const bar2 = el.querySelector(".gbar2 i");
+    if (bar2) bar2.style.width = `${vramPct}%`;
+  }
 }
 
 function renderPowerPanel(gpus) {
@@ -616,13 +796,51 @@ function formatCtx(n) {
   return String(n);
 }
 
+let lastMetrics = null;
+let metricsInFlight = false;
+let softFailStreak = 0;
+
+function isTransientMetricsError(msg) {
+  return /timed out|ECONNRESET|handshake|Disconnected|No response|waiting on host|Failed to fetch|NetworkError/i.test(
+    String(msg || ""),
+  );
+}
+
 async function refreshMetrics() {
+  if (metricsInFlight) return; // don't stack SSH polls
+  metricsInFlight = true;
   try {
     const m = await api("/api/metrics");
+    const soft =
+      m.transient ||
+      (Array.isArray(m.softErrors) && m.softErrors.length > 0 && !(m.gpus && m.gpus.length));
+    if (soft && lastMetrics) {
+      softFailStreak += 1;
+      // Keep last good gauges; only whisper after repeated soft fails
+      if (softFailStreak >= 3) {
+        const act = document.getElementById("activity");
+        if (act && !/waiting on host/.test(act.textContent || "")) {
+          act.innerHTML = `${escapeHtml(lastMetrics.activity || "idle")} <span class="muted">· host lag</span>`;
+        }
+      }
+      return;
+    }
+    softFailStreak = 0;
+    if (m.gpus?.length || m.model || m.ok) lastMetrics = m;
     renderMetrics(m);
   } catch (e) {
+    if (isTransientMetricsError(e.message) && lastMetrics) {
+      softFailStreak += 1;
+      if (softFailStreak >= 3) {
+        document.getElementById("activity").innerHTML =
+          `${escapeHtml(lastMetrics.activity || "idle")} <span class="muted">· host lag</span>`;
+      }
+      return;
+    }
     document.getElementById("activity").innerHTML =
       `<span class="wn">${escapeHtml(e.message)}</span>`;
+  } finally {
+    metricsInFlight = false;
   }
 }
 
@@ -801,11 +1019,15 @@ document.getElementById("btn-load").addEventListener("click", async () => {
   }
 });
 
-["model", "ctx", "gpu", "parallel", "lazy", "loadmode", "ncpu", "ngl", "kvquant", "reasoning"].forEach(
+["ctx", "gpu", "parallel", "lazy", "loadmode", "ncpu", "ngl", "kvquant", "reasoning"].forEach(
   (id) => {
     document.getElementById(id)?.addEventListener("change", syncAdvancedFromControl);
   },
 );
+
+document.getElementById("model")?.addEventListener("change", () => {
+  applyModelCapabilities(document.getElementById("model").value);
+});
 
 document.getElementById("btn-save-conn").addEventListener("click", async () => {
   const body = {

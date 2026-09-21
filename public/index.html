@@ -67,15 +67,16 @@
         <label class="field">
           <div class="label-row">
             Model
-            <button type="button" class="help" data-tip="Bionic / clients should select this same id. Save settings so JIT (when honored) uses your defaults. Load now applies via lms load.">?</button>
+            <button type="button" class="help" data-tip="Bionic / clients should select this same id. Save settings so JIT (when honored) uses your defaults. Load now applies via lms load. Caps below update from LMS model metadata.">?</button>
           </div>
           <select id="model"></select>
+          <div class="model-caps" id="model-caps" aria-live="polite">Select a model to see capabilities.</div>
         </label>
 
         <label class="field">
           <div class="label-row">
             Context
-            <button type="button" class="help" data-tip="Agents need ≥32k. Saved into LMS defaults + passed on Load now.">?</button>
+            <button type="button" class="help" id="ctx-help" data-tip="Options come from the selected model’s max context. Agents need ≥32k when the model allows it. Saved into LMS defaults + passed on Load now.">?</button>
           </div>
           <select id="ctx">
             <option>8192</option>
